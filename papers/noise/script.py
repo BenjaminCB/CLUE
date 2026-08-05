@@ -1,11 +1,8 @@
 import sys
-import platform
+from pathlib import Path
 
 # clue is here
-if platform.system() == 'Linux':
-    sys.path.insert(0, "../..")
-elif platform.system() == "Windows":
-    sys.path.insert(0, "..\..")
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 from clue.linalg import SparseRowMatrix as Circuit, SparseVector as State, NumericalSubspace, find_smallest_common_subspace
@@ -35,7 +32,7 @@ zero = State(8,CC)
 zero[0] = 1
 
 def kronecker(A: Circuit, B: Circuit):
-    return Circuit.from_list(kron(A.to_numpy(CC), B.to_numpy(CC)), CC)
+    return Circuit.from_list(kron(A.to_numpy(), B.to_numpy()), CC)
 
 def kron_pow(A: Circuit, n : int) -> Circuit:
     result = A

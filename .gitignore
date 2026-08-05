@@ -60,6 +60,7 @@ target/
 
 # dotenv
 .env
+.direnv/
 
 # virtualenv
 venv/
