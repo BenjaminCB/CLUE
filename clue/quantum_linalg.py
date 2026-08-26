@@ -98,10 +98,16 @@ class DensityVector(Vector):
         return result
 
     def inner_product(self, rhs, *, _conjugate = True):
-        lhs = self.conjugate() if _conjugate else self # we conjugate the vector (in case the field is CC) if indicated by argument
+        r'''
+            Frobenius inner product `\langle A, B\rangle = \text{tr}(AB^\dagger)`.
+
+            Seeing the density matrices as vectors of dimension `d^2`, this is the inner product of
+            the rows, so we simply delegate on :func:`clue.linalg.SparseVector.inner_product` (which
+            conjugates ``rhs``, when required by the field, following the convention of the module).
+        '''
         result = self.field.zero
         for i in range(self.__base_dim):
-            result += lhs.__data[i] * rhs.__data[i]
+            result += self.__data[i].inner_product(rhs.__data[i], _conjugate=_conjugate)
 
         return result
     

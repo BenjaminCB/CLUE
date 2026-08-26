@@ -21,6 +21,8 @@
           pkgs = nixpkgs.legacyPackages.${system};
           python = pkgs.python3.withPackages (pythonPackages: [
             pythonPackages.beautifulsoup4
+            # hypothesis drives the property-based tests in ./tests.
+            pythonPackages.hypothesis
             pythonPackages.matplotlib
             # mypy lives in the same environment as the project's dependencies so
             # that it can resolve sympy/numpy instead of reporting import-not-found.
@@ -28,6 +30,7 @@
             pythonPackages.natsort
             pythonPackages.numpy
             pythonPackages.pyparsing
+            pythonPackages.pytest
             pythonPackages.requests
             pythonPackages.scipy
             pythonPackages.sympy
