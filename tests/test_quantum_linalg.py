@@ -343,7 +343,6 @@ class TestDensityOperatorProperties:
 
         assert dense(evolved) == approx(dense(vector.apply_matrix(operator)))
 
-    @mark.xfail(strict=True, reason="`apply_matrix` returns the zero vector for the empty ensemble")
     @given(square_matrices())
     def test_the_identity_operator_acts_as_the_identity(self, entries):
         vector = density_vector(entries)

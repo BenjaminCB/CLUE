@@ -15,6 +15,7 @@ r"""
 from .linalg import Vector, Matrix, SparseRowMatrix, SparseVector
 from .numerical_domains import CC
 
+from collections.abc import Sequence
 from math import sqrt
 from sympy.polys.domains.domain import Domain
 
@@ -113,7 +114,9 @@ class DensityVector(Vector):
     
     def apply_matrix(self, matr):
         if isinstance(matr, DensityOperator):
-            if matr.is_ensembled(): # base case -> sum of probabilities * apply circuits
+            if matr.is_identity(): # empty ensemble -> the identity super-operator
+                return self.copy()
+            elif matr.is_ensembled(): # base case -> sum of probabilities * apply circuits
                 v = DensityVector(self.__base_dim, self.field)
                 for U,p in matr.data():
                     v = v + p * U * self * U.dagger()
@@ -170,11 +173,11 @@ class DensityOperator(Matrix):
         the full circuit `C_i` with probability `\pi_i`.
     '''
     def __init__(self, *,
-                circuits: tuple[SparseRowMatrix] = None, probabilities: tuple = None, 
-                operators : tuple[DensityOperator] = None,
-                dim:int = None):
-        self.__data = None
-        self.__operators = None
+                circuits: Sequence[SparseRowMatrix] | None = None, probabilities: Sequence[float] | None = None,
+                operators : Sequence[DensityOperator] | None = None,
+                dim: int | None  = None):
+        self.__data: tuple[tuple[SparseRowMatrix, float], ...] | None = None
+        self.__operators: tuple[DensityOperator, ...] | None = None
         # We have three options to create a density operator:
         ## it is a ensemble operator --> given by a tuple of circuits and probabilities
         if circuits is not None and probabilities is not None:
@@ -211,14 +214,14 @@ class DensityOperator(Matrix):
                 raise TypeError(f"Composite operator: all operators must have the same dimension")
             
             super().__init__(operators[0].dim, CC)
-            self.__operators = operators
+            self.__operators = tuple(operators)
         else:
             raise ValueError(f"Density Operator: incompatible input for class")
     
     def data(self):
         return self.__data
 
-    def operators(self) -> tuple[DensityOperator]:
+    def operators(self) -> tuple[DensityOperator, ...]:
         r'''
             Return a tuple of ensembled density operators that represent self
         '''
