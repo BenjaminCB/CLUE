@@ -241,7 +241,7 @@ class DensityOperator(Matrix):
     ## Abstract methods from Matrix
     @classmethod
     def eye(cls, dim: int):
-        return cls(dim=dim)
+        return cls(circuits=(), probabilities=(), dim=dim)
     
     def transpose(self) -> DensityOperator:
         if self.is_ensembled():

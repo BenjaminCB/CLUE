@@ -1,16 +1,16 @@
 from itertools import product
 from typing import cast
 
-from hypothesis import given
+from hypothesis import given, strategies as st
 from numpy import array, ndarray, trace
 from pytest import approx, mark
 
 from clue.linalg import SparseRowMatrix
 from clue.quantum_linalg import DensityOperator, DensityVector
-from tests.strategies import (Amplitudes, Entries, density_vector, matrices_with_unitary,
-                        mixed_unitary_channels, sparse_matrix, sparse_vector, square_matrices,
-                        square_matrix_pairs, square_matrix_triples, state_vector_ensembles,
-                        state_vectors)
+from tests.strategies import (Amplitudes, Entries, MAX_BASE_DIM, density_vector,
+                        matrices_with_unitary, mixed_unitary_channels, sparse_matrix,
+                        sparse_vector, square_matrices, square_matrix_pairs,
+                        square_matrix_triples, state_vector_ensembles, state_vectors)
 
 ## Slack allowed when comparing the two sides of an inequality. The entries are exact in
 ## ``complex128``, so the only error is the rounding of the square roots taken by the norm.
@@ -362,10 +362,9 @@ class TestDensityOperatorProperties:
 
         assert dense(vector.apply_matrix(identity)) == approx(dense(vector))
 
-    @mark.xfail(strict=True, reason="`eye` calls the constructor without `circuits`/`probabilities`")
-    @given(square_matrices())
-    def test_eye_builds_the_identity_operator(self, entries: Entries):
-        assert DensityOperator.eye(density_vector(entries).dim).is_identity()
+    @given(st.integers(1, MAX_BASE_DIM))
+    def test_eye_builds_the_identity_operator(self, base_dim: int):
+        assert DensityOperator.eye(base_dim ** 2).is_identity()
 
 class TestPureStateProperties:
     r'''
