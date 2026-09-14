@@ -107,7 +107,13 @@ class DensityVector(Vector):
             Seeing the density matrices as vectors of dimension `d^2`, this is the inner product of
             the rows, so we simply delegate on :func:`clue.linalg.SparseVector.inner_product` (which
             conjugates ``rhs``, when required by the field, following the convention of the module).
+
+            ``rhs`` need not be a :class:`DensityVector`: any vector of dimension ``self.dim``
+            (e.g., a plain :class:`~clue.linalg.SparseVector`) is accepted by flattening ``self``.
         '''
+        if not isinstance(rhs, DensityVector):
+            return self.as_vector().inner_product(rhs, _conjugate=_conjugate)
+
         result = self.field.zero
         for i in range(self.__base_dim):
             result += self.__data[i].inner_product(rhs.__data[i], _conjugate=_conjugate)
@@ -129,12 +135,17 @@ class DensityVector(Vector):
                     v = v.apply_matrix(operator)
                 return v
         elif isinstance(matr, SparseRowMatrix):
-            if matr.dim[0]*matr.dim[1] == self.dim:
+            if matr.is_square() and matr.dim[0] == self.__base_dim:
                 M = self.as_matrix()
                 result = matr * M
-                return DensityVector.from_matrix(result)# TODO: by Thomas
-            elif matr.dim[0]*matr.dim[1] == self.dim**2:
+                return DensityVector.from_matrix(result)
+            elif matr.is_square() and matr.dim[0] == self.dim:
                 return DensityVector.from_vector(matr * self.as_vector())
+            elif matr.dim[1] == self.dim:
+                # general (non-square) linear map, e.g. the basis/pseudoinverse
+                # matrix of a Subspace: the result is a coordinate vector, not
+                # necessarily reshapeable into a density matrix
+                return self.as_vector().apply_matrix(matr)
 
         return NotImplemented
 

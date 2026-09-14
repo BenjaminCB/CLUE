@@ -44,8 +44,10 @@ class TestBitFlipChannel:
         rho = zero_state()
         nqb = compute_nqb(channel, rho)
         basis = nqb.basis()
+        # sanity check: this is a genuine (non-trivial, non-square) reduction
+        assert 1 < nqb.dim() < nqb.ambient_dimension()
 
-        coordinates_of = lambda v: np.array([v.inner_product(b) for b in basis])
+        coordinates_of = lambda v: np.array(nqb.find_in(v).to_list(), dtype=complex)
 
         A_hat = np.array([coordinates_of(b.apply_matrix(channel)) for b in basis]).T
         c = coordinates_of(rho)
