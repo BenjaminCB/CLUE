@@ -1,33 +1,38 @@
 from itertools import product
+from typing import cast
 
 from hypothesis import given
-from numpy import array, trace
+from numpy import array, ndarray, trace
 from pytest import approx, mark
 
+from clue.linalg import SparseRowMatrix
 from clue.quantum_linalg import DensityOperator, DensityVector
-from strategies import (density_vector, matrices_with_unitary, mixed_unitary_channels, sparse_matrix,
-                        sparse_vector, square_matrices, square_matrix_pairs, square_matrix_triples,
-                        state_vector_ensembles, state_vectors)
+from tests.strategies import (Amplitudes, Entries, density_vector, matrices_with_unitary,
+                        mixed_unitary_channels, sparse_matrix, sparse_vector, square_matrices,
+                        square_matrix_pairs, square_matrix_triples, state_vector_ensembles,
+                        state_vectors)
 
 ## Slack allowed when comparing the two sides of an inequality. The entries are exact in
 ## ``complex128``, so the only error is the rounding of the square roots taken by the norm.
 TOLERANCE = 1e-9
 
-def frobenius(lhs: list[list], rhs: list[list]):
+def frobenius(lhs: Entries, rhs: Entries) -> complex:
     r'''Reference implementation of the Frobenius inner product on dense matrices.'''
     return trace(array(lhs, dtype=complex) @ array(rhs, dtype=complex).conj().T)
 
-def matrix_unit(dim: int, row: int, column: int) -> list[list]:
+def matrix_unit(dim: int, row: int, column: int) -> Entries:
     r'''Dense representation of the matrix `E_{ij}`: a single 1 at position ``(row, column)``.'''
-    entries = [dim * [0] for _ in range(dim)]
+    entries: Entries = [dim * [0j] for _ in range(dim)]
     entries[row][column] = 1
     return entries
 
-def dense(vector: DensityVector):
+def dense(vector: DensityVector) -> ndarray:
     r'''Dense representation of a density vector, so that we can compare two of them.'''
     return vector.as_matrix().to_numpy()
 
-def evolve(vector: DensityVector, *circuits: list[list], probabilities: tuple = None):
+def evolve(
+    vector: DensityVector, *circuits: Entries, probabilities: tuple[float, ...] | None = None
+) -> DensityVector:
     r'''
         Apply to ``vector`` the super-operator given by the ``circuits`` and the ``probabilities``,
         i.e., the channel `\rho \mapsto \sum_i p_i U_i \rho U_i^\dagger`. Without probabilities we
@@ -51,8 +56,8 @@ class TestFrobeniusInnerProduct:
 
     def test_trace_formula_on_a_fixed_example(self):
         r'''On a fixed complex example the result is `\text{tr}(A B^\dagger)`.'''
-        lhs = [[1 + 1j, 2], [0, 1j]]
-        rhs = [[1, 1 - 1j], [2j, 3]]
+        lhs: Entries = [[1 + 1j, 2], [0, 1j]]
+        rhs: Entries = [[1, 1 - 1j], [2j, 3]]
 
         assert density_vector(lhs).inner_product(density_vector(rhs)) == approx(3 + 6j)
         assert frobenius(lhs, rhs) == approx(3 + 6j)
@@ -63,14 +68,14 @@ class TestFrobeniusInnerProduct:
             matrix multiplication needs. The keyword is not meant for users, but the rest of the
             library relies on it.
         '''
-        lhs = [[1 + 1j, 2], [0, 1j]]
-        rhs = [[1, 1 - 1j], [2j, 3]]
+        lhs: Entries = [[1 + 1j, 2], [0, 1j]]
+        rhs: Entries = [[1, 1 - 1j], [2j, 3]]
 
         assert density_vector(lhs).inner_product(density_vector(rhs), _conjugate=False) == approx(3 + 2j)
 
     def test_induced_frobenius_norm(self):
         r'''The induced norm is the square root of the sum of the squared moduli.'''
-        entries = [[3, 0], [0, 4j]]
+        entries: Entries = [[3, 0], [0, 4j]]
 
         assert density_vector(entries).norm_squared() == approx(25)
         assert density_vector(entries).norm() == approx(5)
@@ -81,21 +86,21 @@ class TestFrobeniusInnerProductProperties:
         homogeneity are checked separately: together they are the linearity in the first argument.
     '''
     @given(square_matrix_pairs())
-    def test_trace_formula(self, matrices):
+    def test_trace_formula(self, matrices: tuple[Entries, Entries]):
         r'''`\langle A, B \rangle = \text{tr}(A B^\dagger)` for every pair of matrices.'''
         lhs, rhs = matrices
 
         assert density_vector(lhs).inner_product(density_vector(rhs)) == approx(frobenius(lhs, rhs))
 
     @given(square_matrix_pairs())
-    def test_conjugate_symmetry(self, matrices):
+    def test_conjugate_symmetry(self, matrices: tuple[Entries, Entries]):
         r'''`\langle A, B \rangle = \overline{\langle B, A \rangle}`.'''
         lhs, rhs = (density_vector(entries) for entries in matrices)
 
         assert lhs.inner_product(rhs) == approx(rhs.inner_product(lhs).conjugate())
 
     @given(square_matrix_triples())
-    def test_additivity_in_the_first_argument(self, matrices):
+    def test_additivity_in_the_first_argument(self, matrices: tuple[Entries, Entries, Entries]):
         r'''`\langle A + B, C \rangle = \langle A, C \rangle + \langle B, C \rangle`.'''
         lhs, rhs, other = (density_vector(entries) for entries in matrices)
 
@@ -104,7 +109,7 @@ class TestFrobeniusInnerProductProperties:
         )
 
     @given(square_matrix_pairs())
-    def test_homogeneity_in_the_first_argument(self, matrices):
+    def test_homogeneity_in_the_first_argument(self, matrices: tuple[Entries, Entries]):
         r'''`\langle cA, B \rangle = c\langle A, B \rangle`, with a genuinely complex scalar.'''
         lhs, rhs = (density_vector(entries) for entries in matrices)
         scalar = 2 - 3j
@@ -112,7 +117,7 @@ class TestFrobeniusInnerProductProperties:
         assert (scalar * lhs).inner_product(rhs) == approx(scalar * lhs.inner_product(rhs))
 
     @given(square_matrix_pairs())
-    def test_conjugate_homogeneity_in_the_second_argument(self, matrices):
+    def test_conjugate_homogeneity_in_the_second_argument(self, matrices: tuple[Entries, Entries]):
         r'''`\langle A, cB \rangle = \bar{c}\langle A, B \rangle`.'''
         lhs, rhs = (density_vector(entries) for entries in matrices)
         scalar = 2 - 3j
@@ -120,7 +125,7 @@ class TestFrobeniusInnerProductProperties:
         assert lhs.inner_product(scalar * rhs) == approx(scalar.conjugate() * lhs.inner_product(rhs))
 
     @given(square_matrices())
-    def test_positive_definiteness(self, entries):
+    def test_positive_definiteness(self, entries: Entries):
         r'''`\langle A, A \rangle` is a non-negative real, and vanishes only on the zero matrix.'''
         vector = density_vector(entries)
         squared = vector.inner_product(vector)
@@ -135,21 +140,21 @@ class TestFrobeniusNormProperties:
         laws every norm coming from an inner product must satisfy.
     '''
     @given(square_matrix_pairs())
-    def test_cauchy_schwarz_inequality(self, matrices):
+    def test_cauchy_schwarz_inequality(self, matrices: tuple[Entries, Entries]):
         r'''`|\langle A, B \rangle| \leq \|A\|\|B\|`.'''
         lhs, rhs = (density_vector(entries) for entries in matrices)
 
         assert abs(lhs.inner_product(rhs)) <= lhs.norm() * rhs.norm() + TOLERANCE
 
     @given(square_matrix_pairs())
-    def test_triangle_inequality(self, matrices):
+    def test_triangle_inequality(self, matrices: tuple[Entries, Entries]):
         r'''`\|A + B\| \leq \|A\| + \|B\|`.'''
         lhs, rhs = (density_vector(entries) for entries in matrices)
 
         assert (lhs + rhs).norm() <= lhs.norm() + rhs.norm() + TOLERANCE
 
     @given(square_matrix_pairs())
-    def test_parallelogram_law(self, matrices):
+    def test_parallelogram_law(self, matrices: tuple[Entries, Entries]):
         r'''`\|A + B\|^2 + \|A - B\|^2 = 2\|A\|^2 + 2\|B\|^2`, the law characterizing the norms
             that come from an inner product.'''
         lhs, rhs = (density_vector(entries) for entries in matrices)
@@ -159,7 +164,7 @@ class TestFrobeniusNormProperties:
         )
 
     @given(square_matrices())
-    def test_absolute_homogeneity(self, entries):
+    def test_absolute_homogeneity(self, entries: Entries):
         r'''`\|cA\| = |c|\|A\|`.'''
         vector = density_vector(entries)
         scalar = 2 - 3j
@@ -167,7 +172,7 @@ class TestFrobeniusNormProperties:
         assert (scalar * vector).norm() == approx(abs(scalar) * vector.norm())
 
     @given(square_matrices())
-    def test_invariance_under_transposition_and_conjugation(self, entries):
+    def test_invariance_under_transposition_and_conjugation(self, entries: Entries):
         r'''`\|A^T\| = \|\bar{A}\| = \|A\|`: both rearrange the moduli of the entries.'''
         vector = density_vector(entries)
 
@@ -180,21 +185,21 @@ class TestDensityVectorRepresentation:
         of dimension `d^2` that :class:`~clue.quantum_linalg.DensityVector` implements.
     '''
     @given(square_matrices())
-    def test_matrix_round_trip(self, entries):
+    def test_matrix_round_trip(self, entries: Entries):
         r'''``from_matrix`` and ``as_matrix`` are inverse of each other.'''
         matrix = sparse_matrix(entries)
 
         assert DensityVector.from_matrix(matrix).as_matrix() == matrix
 
     @given(square_matrices())
-    def test_vector_round_trip(self, entries):
+    def test_vector_round_trip(self, entries: Entries):
         r'''``from_vector`` and ``as_vector`` are inverse of each other.'''
         vector = density_vector(entries)
 
         assert dense(DensityVector.from_vector(vector.as_vector())) == approx(dense(vector))
 
     @given(square_matrices())
-    def test_coordinates_are_in_row_major_order(self, entries):
+    def test_coordinates_are_in_row_major_order(self, entries: Entries):
         r'''The entry `A_{ij}` is the coordinate `id + j` of the flattened vector.'''
         vector = density_vector(entries)
         dim = len(entries)
@@ -206,14 +211,14 @@ class TestDensityVectorRepresentation:
             assert flattened[index] == approx(entries[row][column])
 
     @given(square_matrices())
-    def test_nonzero_coordinates_are_exactly_the_nonzero_entries(self, entries):
+    def test_nonzero_coordinates_are_exactly_the_nonzero_entries(self, entries: Entries):
         vector = density_vector(entries)
         expected = {index for index, entry in enumerate(vector.as_vector().to_list()) if entry != 0}
 
         assert vector.nonzero_coordinates() == expected
 
     @given(square_matrices())
-    def test_a_matrix_is_zero_when_all_its_entries_vanish(self, entries):
+    def test_a_matrix_is_zero_when_all_its_entries_vanish(self, entries: Entries):
         vector = density_vector(entries)
 
         assert vector.is_zero() == all(entry == 0 for row in entries for entry in row)
@@ -224,35 +229,35 @@ class TestDensityVectorInvolutions:
         product transforms under them.
     '''
     @given(square_matrices())
-    def test_transposition_is_an_involution(self, entries):
+    def test_transposition_is_an_involution(self, entries: Entries):
         r'''`(A^T)^T = A`.'''
         vector = density_vector(entries)
 
         assert dense(vector.transpose().transpose()) == approx(dense(vector))
 
     @given(square_matrices())
-    def test_conjugation_is_an_involution(self, entries):
+    def test_conjugation_is_an_involution(self, entries: Entries):
         r'''`\bar{\bar{A}} = A`.'''
         vector = density_vector(entries)
 
         assert dense(vector.conjugate().conjugate()) == approx(dense(vector))
 
     @given(square_matrices())
-    def test_transposition_and_conjugation_commute(self, entries):
+    def test_transposition_and_conjugation_commute(self, entries: Entries):
         r'''`\overline{A^T} = (\bar{A})^T`, which is what makes the adjoint `A^\dagger` well defined.'''
         vector = density_vector(entries)
 
         assert dense(vector.transpose().conjugate()) == approx(dense(vector.conjugate().transpose()))
 
     @given(square_matrix_pairs())
-    def test_invariance_of_the_inner_product_under_transposition(self, matrices):
+    def test_invariance_of_the_inner_product_under_transposition(self, matrices: tuple[Entries, Entries]):
         r'''`\langle A^T, B^T \rangle = \langle A, B \rangle`.'''
         lhs, rhs = (density_vector(entries) for entries in matrices)
 
         assert lhs.transpose().inner_product(rhs.transpose()) == approx(lhs.inner_product(rhs))
 
     @given(square_matrix_pairs())
-    def test_conjugation_of_the_inner_product(self, matrices):
+    def test_conjugation_of_the_inner_product(self, matrices: tuple[Entries, Entries]):
         r'''`\langle \bar{A}, \bar{B} \rangle = \overline{\langle A, B \rangle}`.'''
         lhs, rhs = (density_vector(entries) for entries in matrices)
 
@@ -266,7 +271,7 @@ class TestUnitaryEvolutionProperties:
         under a unitary gate. These are the defining properties of a closed quantum system.
     '''
     @given(matrices_with_unitary())
-    def test_unitary_evolution_preserves_the_frobenius_norm(self, data):
+    def test_unitary_evolution_preserves_the_frobenius_norm(self, data: tuple[Entries, Entries]):
         r'''`\|U \rho U^\dagger\| = \|\rho\|`: a unitary gate does not change the purity.'''
         entries, unitary = data
         vector = density_vector(entries)
@@ -274,7 +279,7 @@ class TestUnitaryEvolutionProperties:
         assert evolve(vector, unitary).norm() == approx(vector.norm())
 
     @given(matrices_with_unitary())
-    def test_unitary_evolution_preserves_the_trace(self, data):
+    def test_unitary_evolution_preserves_the_trace(self, data: tuple[Entries, Entries]):
         r'''`\text{tr}(U \rho U^\dagger) = \text{tr}(\rho)`, by cyclicity of the trace.'''
         entries, unitary = data
         vector = density_vector(entries)
@@ -282,11 +287,11 @@ class TestUnitaryEvolutionProperties:
         assert dense(evolve(vector, unitary)).trace() == approx(dense(vector).trace())
 
     @given(matrices_with_unitary())
-    def test_unitary_evolution_is_reversible(self, data):
+    def test_unitary_evolution_is_reversible(self, data: tuple[Entries, Entries]):
         r'''Applying `U` and then `U^\dagger` gives back the original density matrix.'''
         entries, unitary = data
         vector = density_vector(entries)
-        adjoint = sparse_matrix(unitary).dagger().to_list()
+        adjoint = cast(Entries, cast(SparseRowMatrix, sparse_matrix(unitary).dagger()).to_list())
 
         assert dense(evolve(evolve(vector, unitary), adjoint)) == approx(dense(vector))
 
@@ -296,7 +301,7 @@ class TestDensityOperatorProperties:
         `\rho \mapsto \sum_i p_i U_i \rho U_i^\dagger` given by a mixture of unitary gates.
     '''
     @given(mixed_unitary_channels())
-    def test_mixed_unitary_channel_preserves_the_trace(self, data):
+    def test_mixed_unitary_channel_preserves_the_trace(self, data: tuple[Entries, Entries, Entries, float]):
         r'''A channel built from unitaries is trace preserving, so it maps states to states.'''
         entries, first, second, probability = data
         vector = density_vector(entries)
@@ -306,7 +311,9 @@ class TestDensityOperatorProperties:
         assert dense(evolved).trace() == approx(dense(vector).trace())
 
     @given(mixed_unitary_channels())
-    def test_mixed_unitary_channel_does_not_increase_the_frobenius_norm(self, data):
+    def test_mixed_unitary_channel_does_not_increase_the_frobenius_norm(
+        self, data: tuple[Entries, Entries, Entries, float]
+    ):
         r'''
             `\|\Phi(\rho)\| \leq \|\rho\|`: mixing unitaries can only add noise, never purity. It
             follows from the triangle inequality and the unitary invariance of the norm.
@@ -319,18 +326,23 @@ class TestDensityOperatorProperties:
         assert evolved.norm() <= vector.norm() + TOLERANCE
 
     @given(mixed_unitary_channels())
-    def test_the_channel_is_the_convex_combination_of_its_branches(self, data):
+    def test_the_channel_is_the_convex_combination_of_its_branches(
+        self, data: tuple[Entries, Entries, Entries, float]
+    ):
         r'''`\Phi(\rho) = p\Phi_1(\rho) + (1-p)\Phi_2(\rho)`: the branches act independently.'''
         entries, first, second, probability = data
         vector = density_vector(entries)
 
         evolved = evolve(vector, first, second, probabilities=(probability, 1 - probability))
-        expected = (probability * evolve(vector, first)) + ((1 - probability) * evolve(vector, second))
+        expected = cast(
+            DensityVector,
+            (probability * evolve(vector, first)) + ((1 - probability) * evolve(vector, second)),
+        )
 
         assert dense(evolved) == approx(dense(expected))
 
     @given(mixed_unitary_channels())
-    def test_transposition_is_an_involution_on_operators(self, data):
+    def test_transposition_is_an_involution_on_operators(self, data: tuple[Entries, Entries, Entries, float]):
         r'''Transposing a super-operator twice gives back a super-operator acting the same way.'''
         entries, first, second, probability = data
         vector = density_vector(entries)
@@ -344,7 +356,7 @@ class TestDensityOperatorProperties:
         assert dense(evolved) == approx(dense(vector.apply_matrix(operator)))
 
     @given(square_matrices())
-    def test_the_identity_operator_acts_as_the_identity(self, entries):
+    def test_the_identity_operator_acts_as_the_identity(self, entries: Entries):
         vector = density_vector(entries)
         identity = DensityOperator(circuits=(), probabilities=(), dim=vector.dim)
 
@@ -352,7 +364,7 @@ class TestDensityOperatorProperties:
 
     @mark.xfail(strict=True, reason="`eye` calls the constructor without `circuits`/`probabilities`")
     @given(square_matrices())
-    def test_eye_builds_the_identity_operator(self, entries):
+    def test_eye_builds_the_identity_operator(self, entries: Entries):
         assert DensityOperator.eye(density_vector(entries).dim).is_identity()
 
 class TestPureStateProperties:
@@ -361,7 +373,7 @@ class TestPureStateProperties:
         state, built by :func:`~clue.quantum_linalg.DensityVector.from_tensor`.
     '''
     @given(state_vectors())
-    def test_the_norm_of_a_pure_state_is_the_squared_norm_of_its_amplitudes(self, amplitudes):
+    def test_the_norm_of_a_pure_state_is_the_squared_norm_of_its_amplitudes(self, amplitudes: Amplitudes):
         r'''`\||\psi\rangle\langle\psi|\| = \||\psi\rangle\|^2`.'''
         state = sparse_vector(amplitudes)
 
@@ -369,7 +381,7 @@ class TestPureStateProperties:
 
     @mark.xfail(strict=True, reason="`from_tensor` does not conjugate the second factor")
     @given(state_vectors())
-    def test_a_pure_state_density_matrix_is_hermitian(self, amplitudes):
+    def test_a_pure_state_density_matrix_is_hermitian(self, amplitudes: Amplitudes):
         r'''`|\psi\rangle\langle\psi|` is self-adjoint, as every density matrix must be.'''
         pure = DensityVector.from_tensor(sparse_vector(amplitudes))
 
@@ -377,14 +389,16 @@ class TestPureStateProperties:
 
     @mark.xfail(strict=True, reason="`from_ensemble` unpacks the vectors and the probabilities swapped")
     @given(state_vector_ensembles())
-    def test_an_ensemble_is_the_convex_combination_of_its_pure_states(self, data):
+    def test_an_ensemble_is_the_convex_combination_of_its_pure_states(
+        self, data: tuple[Amplitudes, Amplitudes, float]
+    ):
         r'''`\rho = \sum_i p_i |\psi_i\rangle\langle\psi_i|`.'''
         first, second, probability = data
         states = (sparse_vector(first), sparse_vector(second))
 
         ensemble = DensityVector.from_ensemble(states, (probability, 1 - probability))
-        expected = (probability * DensityVector.from_tensor(states[0])) + (
+        expected = cast(DensityVector, (probability * DensityVector.from_tensor(states[0])) + (
             (1 - probability) * DensityVector.from_tensor(states[1])
-        )
+        ))
 
         assert dense(ensemble) == approx(dense(expected))

@@ -53,7 +53,7 @@ class DensityVector(Vector):
         return output
     
     @staticmethod
-    def from_ensemble(vectors: tuple[SparseVector], probabilities: tuple[float]) -> DensityOperator:
+    def from_ensemble(vectors: tuple[SparseVector, ...], probabilities: tuple[float, ...]) -> DensityVector:
         if len(vectors) <= 0 or len(vectors) != len(probabilities):
             raise TypeError(f"The input must be non-empty lists of same lengths")
         if sum(probabilities) != 1:

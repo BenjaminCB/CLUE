@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "lsp": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "--silent",
+        "git+https://github.com/jonrad/lsp-mcp",
+        "--lsp",
+        "basedpyright-langserver --stdio"
+      ]
+    }
+  }
+}

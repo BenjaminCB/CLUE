@@ -41,6 +41,11 @@
             packages = [
               pkgs.just
               python
+              # basedpyright-langserver backs the lsp-mcp server (see .mcp.json),
+              # giving Claude Code access to real inferred types via the LSP.
+              pkgs.basedpyright
+              # nodejs provides npx, used to run lsp-mcp on demand.
+              pkgs.nodejs
             ];
           };
         }
