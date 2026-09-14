@@ -379,7 +379,6 @@ class TestPureStateProperties:
 
         assert DensityVector.from_tensor(state).norm() == approx(state.norm() ** 2)
 
-    @mark.xfail(strict=True, reason="`from_tensor` does not conjugate the second factor")
     @given(state_vectors())
     def test_a_pure_state_density_matrix_is_hermitian(self, amplitudes: Amplitudes):
         r'''`|\psi\rangle\langle\psi|` is self-adjoint, as every density matrix must be.'''

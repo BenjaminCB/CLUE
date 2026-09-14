@@ -37,7 +37,7 @@ class DensityVector(Vector):
 
     @staticmethod
     def from_tensor(vector: SparseVector) -> DensityVector:
-        return DensityVector.from_matrix(vector.tensor(vector))
+        return DensityVector.from_matrix(vector.tensor(vector.conjugate()))
     
     @staticmethod
     def from_vector(vector: SparseVector) -> DensityVector:
