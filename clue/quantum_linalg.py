@@ -128,7 +128,7 @@ class DensityVector(Vector):
                 v = DensityVector(self.__base_dim, self.field)
                 for U,p in matr.data():
                     v = v + p * U * self * U.dagger()
-                return v # TODO: by Thomas
+                return v 
             else: # composed case -> we apply one by one
                 v = self
                 for operator in matr.operators():
