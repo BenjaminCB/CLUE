@@ -16,7 +16,9 @@ from .linalg import Vector, Matrix, SparseRowMatrix, SparseVector
 from .numerical_domains import CC
 
 from collections.abc import Sequence
+from functools import reduce
 from math import sqrt
+from operator import add
 from sympy.polys.domains.domain import Domain
 
 class DensityVector(Vector):
@@ -58,7 +60,7 @@ class DensityVector(Vector):
             raise TypeError(f"The input must be non-empty lists of same lengths")
         if sum(probabilities) != 1:
             raise ValueError(f"The probabilities must provide a valid finite distribution (i.e., add up to 1)")
-        return sum(p*DensityVector.from_tensor(v) for (p,v) in zip(vectors, probabilities))
+        return reduce(add, (p*DensityVector.from_tensor(v) for (v,p) in zip(vectors, probabilities)))
     
     def copy(self) -> DensityVector:
         return DensityVector.from_matrix(self.as_matrix())

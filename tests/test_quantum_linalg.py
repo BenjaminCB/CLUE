@@ -386,7 +386,6 @@ class TestPureStateProperties:
 
         assert dense(pure.transpose().conjugate()) == approx(dense(pure))
 
-    @mark.xfail(strict=True, reason="`from_ensemble` unpacks the vectors and the probabilities swapped")
     @given(state_vector_ensembles())
     def test_an_ensemble_is_the_convex_combination_of_its_pure_states(
         self, data: tuple[Amplitudes, Amplitudes, float]
