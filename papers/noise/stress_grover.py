@@ -5,26 +5,11 @@ from math import sqrt, pi, floor
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", "..")) # clue is here
 
-from numpy import kron
 from clue.linalg import SparseRowMatrix as Circuit, SparseVector as State, NumericalSubspace, find_smallest_common_subspace
 from clue.numerical_domains import CC
 from clue.quantum_linalg import DensityOperator, DensityVector
 
-## --------------------------------------------------------------------------
-## Small gate-building toolkit (dense kron via numpy, mirroring papers/noise/script.py)
-## --------------------------------------------------------------------------
-def kronecker(A: Circuit, B: Circuit) -> Circuit:
-    return Circuit.from_list(kron(A.to_numpy(), B.to_numpy()), CC)
-
-def kron_pow(A: Circuit, n: int) -> Circuit:
-    result = A
-    for _ in range(1, n):
-        result = kronecker(result, A)
-    return result
-
-H = Circuit(2, CC)
-H.increment(0,0,1/sqrt(2)); H.increment(0,1,1/sqrt(2))
-H.increment(1,0,1/sqrt(2)); H.increment(1,1,-1/sqrt(2))
+from circuits import kron_pow, H, gate_failure_channel
 
 ## --------------------------------------------------------------------------
 ## Grover circuit
@@ -50,14 +35,9 @@ def initial_state(n: int) -> State:
     v[0] = 1
     return v.apply_matrix(kron_pow(H, n))
 
-def noisy_layer(circuit: Circuit, epsilon: float) -> DensityOperator:
-    r'''With probability ``1-epsilon`` apply the ideal gate; with probability ``epsilon`` it fails (identity).'''
-    N = circuit.nrows
-    return DensityOperator(circuits=[circuit, Circuit.eye(N, CC)], probabilities=[1-epsilon, epsilon])
-
 def noisy_grover(n: int, iterations: int, epsilon: float, target: int) -> DensityOperator:
-    O = noisy_layer(oracle(n, target), epsilon)
-    D = noisy_layer(diffuser(n), epsilon)
+    O = gate_failure_channel(oracle(n, target), epsilon)
+    D = gate_failure_channel(diffuser(n), epsilon)
     return DensityOperator(operators=iterations*[O, D])
 
 def optimal_iterations(n: int) -> int:

@@ -1,32 +1,17 @@
 from __future__ import annotations
 import argparse, sys, os, time
 from itertools import combinations
-from math import sqrt, cos, sin
+from math import cos, sin
 from random import Random
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", "..")) # clue is here
 
-from numpy import kron
 from clue.linalg import SparseRowMatrix as Circuit, SparseVector as State, NumericalSubspace, find_smallest_common_subspace
 from clue.numerical_domains import CC
 from clue.quantum_linalg import DensityOperator, DensityVector
 
-## --------------------------------------------------------------------------
-## Small gate-building toolkit (dense kron via numpy, mirroring papers/noise/script.py)
-## --------------------------------------------------------------------------
-def kronecker(A: Circuit, B: Circuit) -> Circuit:
-    return Circuit.from_list(kron(A.to_numpy(), B.to_numpy()), CC)
-
-def kron_pow(A: Circuit, n: int) -> Circuit:
-    result = A
-    for _ in range(1, n):
-        result = kronecker(result, A)
-    return result
-
-H = Circuit(2, CC)
-H.increment(0,0,1/sqrt(2)); H.increment(0,1,1/sqrt(2))
-H.increment(1,0,1/sqrt(2)); H.increment(1,1,-1/sqrt(2))
+from circuits import kron_pow, H, gate_failure_channel
 
 ## --------------------------------------------------------------------------
 ## MaxCut graph and QAOA circuit
@@ -64,14 +49,9 @@ def initial_state(n: int) -> State:
     v[0] = 1
     return v.apply_matrix(kron_pow(H, n))
 
-def noisy_layer(circuit: Circuit, epsilon: float) -> DensityOperator:
-    r'''With probability ``1-epsilon`` apply the ideal gate; with probability ``epsilon`` it fails (identity).'''
-    N = circuit.nrows
-    return DensityOperator(circuits=[circuit, Circuit.eye(N, CC)], probabilities=[1-epsilon, epsilon])
-
 def noisy_qaoa(n: int, edges: list[tuple[int,int]], layers: int, gamma: float, beta: float, epsilon: float) -> DensityOperator:
-    Uc = noisy_layer(cost_unitary(n, edges, gamma), epsilon)
-    Ub = noisy_layer(mixer_unitary(n, beta), epsilon)
+    Uc = gate_failure_channel(cost_unitary(n, edges, gamma), epsilon)
+    Ub = gate_failure_channel(mixer_unitary(n, beta), epsilon)
     return DensityOperator(operators=layers*[Uc, Ub])
 
 ## --------------------------------------------------------------------------

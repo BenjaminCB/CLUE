@@ -1,55 +1,16 @@
 from __future__ import annotations
 import argparse, sys, os, time
-from math import sqrt
-
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", "..")) # clue is here
 
-from numpy import kron
 from clue.linalg import SparseRowMatrix as Circuit, SparseVector as State, NumericalSubspace, find_smallest_common_subspace
 from clue.numerical_domains import CC
 from clue.quantum_linalg import DensityOperator, DensityVector
 
-## --------------------------------------------------------------------------
-## Small gate-building toolkit (dense kron via numpy, mirroring papers/noise/script.py)
-## --------------------------------------------------------------------------
-def kronecker(A: Circuit, B: Circuit) -> Circuit:
-    return Circuit.from_list(kron(A.to_numpy(), B.to_numpy()), CC)
-
-def kron_pow(A: Circuit, n: int) -> Circuit:
-    result = A
-    for _ in range(1, n):
-        result = kronecker(result, A)
-    return result
-
-def embed1(gate: Circuit, i: int, n: int) -> Circuit:
-    r'''Embed a 1-qubit gate acting on qubit ``i`` into an ``n``-qubit register.'''
-    result = gate
-    if n-i-1 > 0:
-        result = kronecker(result, kron_pow(I, n-i-1))
-    if i > 0:
-        result = kronecker(kron_pow(I, i), result)
-    return result
-
-def embed2(gate: Circuit, i: int, n: int) -> Circuit:
-    r'''Embed a 2-qubit gate acting on qubits ``(i, i+1)`` into an ``n``-qubit register.'''
-    result = gate
-    if n-i-2 > 0:
-        result = kronecker(result, kron_pow(I, n-i-2))
-    if i > 0:
-        result = kronecker(kron_pow(I, i), result)
-    return result
-
-I = Circuit.eye(2, CC)
-X = Circuit(2, CC); X.increment(0,1,1); X.increment(1,0,1)
-H = Circuit(2, CC)
-H.increment(0,0,1/sqrt(2)); H.increment(0,1,1/sqrt(2))
-H.increment(1,0,1/sqrt(2)); H.increment(1,1,-1/sqrt(2))
-CX = Circuit(4, CC)
-CX.increment(0,0,1); CX.increment(1,1,1); CX.increment(2,3,1); CX.increment(3,2,1)
+from circuits import embed1, embed2, H, CX, bitflip_channel
 
 ## --------------------------------------------------------------------------
-## GHZ preparation and per-qubit bit-flip noise
+## GHZ preparation
 ## --------------------------------------------------------------------------
 def ghz_state(n: int) -> State:
     v = State(2**n, CC)
@@ -59,20 +20,13 @@ def ghz_state(n: int) -> State:
         V = embed2(CX, i, n) * V
     return v.apply_matrix(V)
 
-def bitflip_round(n: int, p: float) -> DensityOperator:
-    r'''One round of independent bit-flip noise (probability ``p``) on every qubit.'''
-    N = 2**n
-    identity = Circuit.eye(N, CC)
-    channels = [DensityOperator(circuits=[identity, embed1(X, i, n)], probabilities=[1-p, p]) for i in range(n)]
-    return DensityOperator(operators=channels)
-
 ## --------------------------------------------------------------------------
 ## Stress test loop
 ## --------------------------------------------------------------------------
 def run_size(n: int, p: float, delta: float) -> dict:
     N = 2**n
     rho = DensityVector.from_tensor(ghz_state(n))
-    R = bitflip_round(n, p)
+    R = bitflip_channel(n, p)
 
     start = time.perf_counter()
     nqb = find_smallest_common_subspace(matrices=(R,), vectors_to_include=(rho,), subspace_class=NumericalSubspace, delta=delta)

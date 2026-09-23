@@ -12,17 +12,8 @@ from clue.numerical_domains import CC
 from clue.quantum_linalg import DensityOperator, DensityVector
 
 from math import sqrt, log10, floor
-from numpy import kron
 
-
-X = Circuit(2, CC)
-X.increment(1,0,1)
-X.increment(0,1,1)
-Y = Circuit(2, CC)
-Y.increment(1,0,CC(1j))
-Y.increment(0,1,CC(-1j))
-
-I = Circuit.eye(2, CC)
+from circuits import kronecker, kron_pow, I, X, Y, H, CX, gate_failure_channel
 
 plus = State(2, CC)
 plus[0], plus[1] = 1/sqrt(2), 1/sqrt(2)
@@ -32,34 +23,6 @@ minus[0], minus[1] = 1/sqrt(2), -1/sqrt(2)
 
 zero = State(8,CC)
 zero[0] = 1
-
-def kronecker(A: Circuit, B: Circuit):
-    return Circuit.from_list(kron(A.to_numpy(), B.to_numpy()), CC)
-
-def kron_pow(A: Circuit, n : int) -> Circuit:
-    result = A
-    for _ in range(1,n):
-        result = kronecker(result, A)
-
-    return result
-
-# Hadamard Gate
-# 1/sqrt2 * [1, 1]
-#           [1,-1]
-H = Circuit(2,CC)
-H.increment(0,0,1/sqrt(2));H.increment(0,1,1/sqrt(2))
-H.increment(1,0,1/sqrt(2));H.increment(1,1,-1/sqrt(2))
-
-# CNOT Gate
-# [1,0,0,0]
-# [0,1,0,0]
-# [0,0,0,1]
-# [0,0,1,0]
-CX = Circuit(4,CC)
-CX.increment(0,0,1)
-CX.increment(1,1,1)
-CX.increment(2,3,1)
-CX.increment(3,2,1)
 
 # Matrix for the composition of each layer in GHZ
 U_1 = kronecker(kronecker(H,I),I) # Goes from 4x4 (the first kronecker) to 8x8 (the second)
@@ -95,9 +58,7 @@ def G(n: int, epsilon: float) -> DensityOperator:
     O = CnNOT(n+1)
     P = [kronecker(kron_pow(H, n), I), kronecker(kron_pow(I, n), X), not_CnNOT(n+1), kronecker(kron_pow(H, n), I)]
 
-    In = Circuit.eye(2**(n+1), CC)
-
-    operators = [DensityOperator(circuits=[circ, In], probabilities=[1-epsilon, epsilon]) for circ in [O] + P]
+    operators = [gate_failure_channel(circ, epsilon) for circ in [O] + P]
     return DensityOperator(operators=operators)
 
 def G_input(n: int) -> DensityVector:
