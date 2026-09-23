@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse, sys, os, time
+import argparse, sys, os, time, tracemalloc
 from itertools import combinations
 from math import cos, sin
 from random import Random
@@ -12,6 +12,12 @@ from clue.numerical_domains import CC
 from clue.quantum_linalg import DensityOperator, DensityVector
 
 from circuits import kron_pow, H, gate_failure_channel
+from results import append_row
+
+CSV_HEADER = [
+    "vertices", "state_dim", "edges", "layers", "gamma", "beta", "epsilon", "delta",
+    "time_lumping", "memory_mb", "ambient_dim", "reduced_dim", "red_ratio", "graph",
+]
 
 ## --------------------------------------------------------------------------
 ## MaxCut graph and QAOA circuit
@@ -64,13 +70,16 @@ def run_size(n: int, density: float, seed: int, layers: int, gamma: float, beta:
     G = noisy_qaoa(n, edges, layers, gamma, beta, epsilon)
     rho = DensityVector.from_tensor(initial_state(n))
 
+    tracemalloc.start()
     start = time.perf_counter()
     nqb = find_smallest_common_subspace(matrices=(G,), vectors_to_include=(rho,), subspace_class=NumericalSubspace, delta=delta)
     elapsed = time.perf_counter() - start
+    memory = tracemalloc.get_traced_memory()[1] / (2**20)
+    tracemalloc.stop()
 
     return {
         "vertices": n, "state_dim": N, "ambient_dim": nqb.ambient_dimension(),
-        "reduced_dim": nqb.dim(), "edges": len(edges), "time": elapsed,
+        "reduced_dim": nqb.dim(), "edges": edges, "time": elapsed, "memory": memory,
     }
 
 def main():
@@ -85,6 +94,7 @@ def main():
     parser.add_argument("--epsilon", type=float, default=1e-3, help="gate-failure probability per layer (default: 1e-3)")
     parser.add_argument("--delta", type=float, default=1e-6, help="absorption threshold for NumericalSubspace (default: 1e-6)")
     parser.add_argument("--max-seconds", type=float, default=30.0, help="stop the sweep after a size takes longer than this (checked between sizes, not mid-computation; default: 30s)")
+    parser.add_argument("--csv", type=str, default=None, help="append results to this CSV file (created with a header if new)")
     args = parser.parse_args()
 
     print("Stress test: noisy quantum bisimulation on QAOA MaxCut")
@@ -100,11 +110,18 @@ def main():
         ratio = result["reduced_dim"] / result["ambient_dim"]
         factor = result["ambient_dim"] / result["reduced_dim"]
         print(
-            f"{result['vertices']:>8} {result['state_dim']:>9} {result['edges']:>6} "
+            f"{result['vertices']:>8} {result['state_dim']:>9} {len(result['edges']):>6} "
             f"{result['time']:>10.4f} {result['reduced_dim']:>8} {result['ambient_dim']:>9} "
             f"{ratio:>8.5f} {factor:>9.1f}x"
         )
         sys.stdout.flush()
+
+        if args.csv:
+            append_row(args.csv, CSV_HEADER, [
+                result["vertices"], result["state_dim"], len(result["edges"]), args.layers, args.gamma, args.beta,
+                args.epsilon, args.delta, result["time"], result["memory"], result["ambient_dim"],
+                result["reduced_dim"], ratio, repr(result["edges"]),
+            ])
 
         if result["time"] > args.max_seconds:
             print(f"-- stopping: size n={n} took {result['time']:.1f}s, over the {args.max_seconds:g}s budget --")
