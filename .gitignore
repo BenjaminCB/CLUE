@@ -86,3 +86,5 @@ docs/_sources
 
 papers/quantum/packages
 papers/quantum/*.zip
+
+.vibe-wise
