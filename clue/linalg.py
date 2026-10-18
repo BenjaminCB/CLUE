@@ -2128,10 +2128,10 @@ class OrthogonalSubspace(Subspace):
         ## new[j][i] = old[i][j] + conj(u_conj[i]*u[j]/norm(u))
         for i, j in combinations(new_vector.nonzero_coordinates(), 2):
             to_add_ij = (
-                new_vector_conj.coordinate(i) * new_vector.coordinate(j)
+                new_vector.coordinate(i) * new_vector_conj.coordinate(j)
             ) / norm2
             to_add_ji = (
-                new_vector_conj.coordinate(j) * new_vector.coordinate(i)
+                new_vector.coordinate(j) * new_vector_conj.coordinate(i)
             ) / norm2
             self.projector.increment(i, j, to_add_ij)
             self.projector.increment(j, i, to_add_ji)

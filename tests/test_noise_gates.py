@@ -1,8 +1,8 @@
 r'''
 Cross-checks for the gate-level circuits in ``papers/noise``.
 
-The stress tests there used to apply noise to whole blocks (Grover's oracle and diffuser, QAOA's
-cost and mixer layers) built as single collapsed matrices. They now build the same operators out of
+The stress tests there used to apply noise to whole blocks (Grover's oracle and diffuser, the
+MaxCut cost layer) built as single collapsed matrices. They now build the same operators out of
 IBM-basis gates so that noise can act on each gate, which is what the NQB draft actually specifies
 ("noisy quantum circuits arise by composing noisy quantum gates"). These tests pin the
 decompositions to the collapsed matrices they replaced.
@@ -18,13 +18,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from circuits import (  # noqa: E402
     CX, DURATIONS, H, I, SX, X, Z, RZ, ccx, ccz, cp, cx, depolarizing_gate, embed1, embed2, embedN,
-    h, hadamard_layer, idle_round, mcp, mcz, noisy_circuit, prepare, rx, rz, rzz, sx, x, zero_state,
+    h, hadamard_layer, mcp, mcz, noisy_circuit, prepare, rx, rz, rzz, sx, x, zero_state,
     _mcx, _pauli_basis,
 )
-from stress_ghz import ghz_gates, ghz_state, idle_gates  # noqa: E402
 from stress_grover import diffuser, diffuser_gates, initial_state, iteration_gates, oracle, oracle_gates  # noqa: E402
 from stress_qaoa_maxcut import (  # noqa: E402
-    cost_gates, cost_unitary, layer_gates, mixer_gates, mixer_unitary, random_graph,
+    cost_gates, cost_unitary, cut_difference_count, cut_matrix, cut_values, random_graph, run_size,
 )
 
 def dense(matrix) -> np.ndarray:
@@ -197,14 +196,9 @@ class TestStressTestCircuits:
         edges = random_graph(n, 1.0, 42)
         assert_same_up_to_phase(unitary(cost_gates(n, edges, gamma), n), dense(cost_unitary(n, edges, gamma)))
 
-    @mark.parametrize("n", [2, 3, 4, 5])
-    @mark.parametrize("beta", [0.4, -0.9])
-    def test_qaoa_mixer_layer(self, n, beta):
-        assert_same_up_to_phase(unitary(mixer_gates(n, beta), n), dense(mixer_unitary(n, beta)))
-
 class TestCommonStructure:
     r'''
-    All three stress tests have the same shape: preparation runs ONCE from |0...0> (noisily), and the
+    Both stress tests have the same shape: preparation runs ONCE from |0...0> (noisily), and the
     operator handed to the lumping is the *repeated unit* of the circuit. Preparation must not be
     inside that operator, or `A^2` would prepare the state a second time on top of the evolved one.
     '''
@@ -212,12 +206,6 @@ class TestCommonStructure:
     def test_hadamard_layer_prepares_the_uniform_superposition(self, n):
         got = unitary(hadamard_layer(n), n) @ np.array(zero_state(n).to_list(), dtype=complex)
         want = np.array(initial_state(n).to_list(), dtype=complex)
-        assert_same_up_to_phase(np.outer(got, got.conj()), np.outer(want, want.conj()))
-
-    @mark.parametrize("n", [2, 3, 4, 5, 6])
-    def test_ghz_gates_prepare_the_ghz_state(self, n):
-        got = unitary(ghz_gates(n), n) @ np.array(zero_state(n).to_list(), dtype=complex)
-        want = np.array(ghz_state(n).to_list(), dtype=complex)
         assert_same_up_to_phase(np.outer(got, got.conj()), np.outer(want, want.conj()))
 
     @mark.parametrize("n", [2, 3, 4, 5])
@@ -228,17 +216,15 @@ class TestCommonStructure:
         assert_same_up_to_phase(unitary(iteration_gates(n, target), n), want)
 
     @mark.parametrize("n", [2, 3, 4, 5])
-    def test_the_repeated_unit_of_qaoa_is_one_layer(self, n):
-        edges, gamma, beta = random_graph(n, 1.0, 42), 0.7, 0.4
-        want = dense(mixer_unitary(n, beta)) @ dense(cost_unitary(n, edges, gamma))
-        assert_same_up_to_phase(unitary(layer_gates(n, edges, gamma, beta), n), want)
-
-    @mark.parametrize("n", [2, 3, 4])
-    def test_an_idle_step_is_noiselessly_the_identity(self, n):
-        assert unitary(idle_gates(n, 400.0), n) == approx(np.eye(2**n))
+    @mark.parametrize("gamma", [1.0, 0.7])
+    def test_the_repeated_unit_of_maxcut_is_the_exponential_of_the_cut_matrix(self, n, gamma):
+        r'''The noise-free test lumps `cut_matrix` as a generator, so this must be its exponential.'''
+        edges = random_graph(n, 1.0, 42)
+        want = np.diag(np.exp(-1j * gamma * np.diagonal(dense(cut_matrix(n, edges))).real))
+        assert_same_up_to_phase(unitary(cost_gates(n, edges, gamma), n), want)
 
     @mark.parametrize("n", [2, 3])
-    @mark.parametrize("gates_of", [lambda n: hadamard_layer(n), lambda n: ghz_gates(n)])
+    @mark.parametrize("gates_of", [lambda n: hadamard_layer(n)])
     def test_noiseless_preparation_is_the_exact_pure_state(self, n, gates_of):
         gates = gates_of(n)
         got = dense(prepare(gates, n, 0.0).as_matrix())
@@ -252,3 +238,25 @@ class TestCommonStructure:
         assert rho == approx(rho.conj().T, abs=1e-10)
         assert min(np.linalg.eigvalsh(rho)) > -1e-10
         assert np.trace(rho @ rho).real < 1 - 1e-6 # genuinely mixed, so preparation noise landed
+
+class TestNoiseFreeBaselines:
+    r'''
+    The reductions the engine must reproduce with the noise switched off. The cost layer is
+    diagonal, so in density space the dimension is the number of distinct cut *differences*, not
+    the distinct cut *values* the noise-free predecessor expects in state space.
+    '''
+    @mark.parametrize("n", [2, 3, 4])
+    @mark.parametrize("density", [1.0, 0.6])
+    def test_the_noise_free_cost_layer_reduces_to_the_cut_differences(self, n, density):
+        edges = random_graph(n, density, 42)
+        result = run_size(n, density, 42, gamma=1.0, epsilon=0.0, delta=1e-9)
+
+        assert result["reduced_dim"] == cut_difference_count(n, edges)
+        assert result["reduced_dim"] < result["ambient_dim"] # it is a genuine reduction
+
+    @mark.parametrize("n", [2, 3, 4])
+    def test_the_density_space_reduction_is_not_the_state_space_one(self, n):
+        r'''The two agree only for a single cut value or a `\pm` symmetric pair, which these are not.'''
+        edges = random_graph(n, 1.0, 42)
+
+        assert cut_difference_count(n, edges) > len(cut_values(n, edges))

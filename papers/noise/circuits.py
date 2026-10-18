@@ -388,20 +388,6 @@ def hadamard_layer(n: int) -> list[Gate]:
     r'''`H^{\otimes n}`, as gates: the uniform-superposition preparation of Grover and QAOA.'''
     return [gate for q in range(n) for gate in h(q)]
 
-def idle(q: int, duration: float) -> Gate:
-    r'''
-        A qubit sitting idle for ``duration`` nanoseconds.
-
-        The gate is the identity, so noiselessly this does nothing; but
-        :func:`depolarizing_gate` reads the noise strength off ``duration``, so under noise this is
-        exactly one round of depolarising decoherence. No new machinery is needed for it.
-    '''
-    return Gate(I, (q,), duration, "idle")
-
-def idle_round(n: int, duration: float) -> list[Gate]:
-    r'''One time step in which every qubit of an ``n``-qubit register idles.'''
-    return [idle(q, duration) for q in range(n)]
-
 def prepare(gates: Sequence[Gate], n: int, epsilon: float, *, reference: float | None = None) -> DensityVector:
     r'''
         Run a preparation circuit **once**, noisily, on `\ket{0\ldots0}`.
