@@ -127,12 +127,6 @@ def embedN(gate: Circuit, qubits: Sequence[int], n: int) -> Circuit:
 
 ## --------------------------------------------------------------------------
 ## The IBM basis {CX, RZ(theta), SX, X}
-##
-## This is the gate set the stress tests are built from. It is exactly universal (no approximate
-## synthesis, so nothing competes with the `delta` of `NumericalSubspace`), and it is the level at
-## which a per-gate noise model means what it says: `SX` is the single calibrated microwave pulse,
-## `CX` the two-qubit entangler, and `RZ` is "virtual" -- a phase-frame change applied to later
-## pulses, taking no time and introducing no error.
 ## --------------------------------------------------------------------------
 Z = Circuit(2, CC)
 Z.increment(0,0,1); Z.increment(1,1,-1)
@@ -176,10 +170,6 @@ def cx(c: int, t: int) -> Gate:       return Gate(CX, (c, t), DURATIONS["cx"], "
 
 ## --------------------------------------------------------------------------
 ## Derived gates, as IBM-basis gate lists
-##
-## Global phases are dropped throughout: they cancel in `rho -> U rho U^dagger`, and a global phase
-## on a sub-block stays a scalar multiple of the identity under composition, so it never becomes a
-## relative phase.
 ## --------------------------------------------------------------------------
 def h(q: int) -> list[Gate]:
     r'''`H = e^{i\pi/4} RZ(\pi/2)\, SX\, RZ(\pi/2)`.'''
@@ -216,14 +206,8 @@ def ccx(a: int, b: int, c: int) -> list[Gate]:
     return h(c) + ccz(a, b, c) + h(c)
 
 ## --------------------------------------------------------------------------
-## Multi-controlled gates, ancilla-free, following Barenco et al.,
+## Multi-controlled gates, following Barenco et al.,
 ## "Elementary gates for quantum computation" (Phys. Rev. A 52, 3457, 1995).
-##
-## The register never grows: Grover's oracle and diffuser are multi-controlled gates over *all* `n`
-## qubits, so no spare qubit exists at the top level, and adding one would multiply the ambient
-## dimension (`N^2`) that the stress tests measure. What makes Barenco's `Theta(m^2)` reachable
-## anyway is that the recursion below runs on multi-controlled *phase* gates: at each level the
-## phase target is idle while the inner `MCX` runs, so it can be borrowed as a dirty work qubit.
 ## --------------------------------------------------------------------------
 def _mcx_vchain(controls: Sequence[int], target: int, work: Sequence[int]) -> list[Gate]:
     r'''
@@ -322,13 +306,6 @@ def depolarizing_gate(gate: Gate, n: int, epsilon: float, *, reference: float | 
         Depolarising noise on a single ``gate`` of an ``n``-qubit register.
 
         The depolarising parameter comes from the gate's duration,
-        `\lambda = \varepsilon \cdot \text{duration} / \text{reference}`, so ``epsilon`` means
-        "the depolarising parameter of a gate one ``reference`` long" -- by default one ``SX``, the
-        only physical single-qubit pulse, which is close to what calibration data reports. Dividing
-        by a reference duration is what makes `\lambda` dimensionless; the alternative would be a
-        decoherence time `T_{\text{eff}}`, which fixes `\lambda` outright and leaves nothing to
-        sweep. A virtual ``RZ`` has zero duration and so comes out exactly noiseless, with no
-        special case for it.
 
         The channel follows **qiskit's** convention, i.e. that of ``depolarizing_error(lam, k)``:
 
@@ -337,14 +314,7 @@ def depolarizing_gate(gate: Gate, n: int, epsilon: float, *, reference: float | 
             \rho \mapsto (1-\lambda)\, U\rho U^\dagger + \lambda\, \text{tr}(\rho)\, I/2^k,
 
         which as a mixture over the `4^k` Pauli strings on the gate's own qubits puts weight
-        `1-\lambda+\lambda/4^k` on the identity and `\lambda/4^k` on each of the rest. This is worth
-        stating because a second convention shares the name -- "with probability `p` apply a
-        uniformly random non-identity Pauli", `(1-p)\rho + (p/3)\sum_{P \neq I} P\rho P` -- under
-        which the same number is a different noise strength. Reported hardware error rates follow
-        qiskit's. Paulis are applied *after* the gate, again as qiskit does.
-
-        Every branch is unitary and the weights sum to 1, so this stays inside the
-        `A\rho = \sum_k \pi_k U_k \rho U_k^\dagger` form the NQB theory is stated for.
+        `1-\lambda+\lambda/4^k` on the identity and `\lambda/4^k` on each of the rest. 
     '''
     U = embedN(gate.matrix, gate.qubits, n)
     t_reference = DURATIONS["sx"] if reference is None else reference
