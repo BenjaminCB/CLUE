@@ -51,9 +51,9 @@ EXPERIMENTS = [
 DYNAMICS = (
     [param(k, b, n, eps, id=f"{k}-{n}-eps{eps:g}")
      for (k, b, n) in [("maxcut", maxcut, 2), ("maxcut", maxcut, 3), ("grover", grover, 2)]
-     for eps in (0.0, 1e-3)]
+     for eps in (0.0, 1.0)]
     + [param("grover", grover, 3, 0.0, id="grover-3-eps0"),
-       param("grover", grover, 3, 1e-3, id="grover-3-eps0.001", marks=_DEGENERATE_BASIS)]
+       param("grover", grover, 3, 1.0, id="grover-3-eps1", marks=_DEGENERATE_BASIS)]
 )
 
 class ReducedModel:
@@ -80,7 +80,7 @@ class TestTheorem1:
     @mark.parametrize("name,build,n", EXPERIMENTS)
     def test_the_basis_is_orthonormal(self, name, build, n):
         r'''The premise: `P^{-1}` inverts `P` only for an orthonormal basis.'''
-        model = ReducedModel(*build(n, 1e-3))
+        model = ReducedModel(*build(n, 1.0))
 
         assert model.L @ model.L.conj().T == approx(np.eye(model.nqb.dim()), abs=1e-9)
         assert np.linalg.cond(model.L) == approx(1.0, abs=1e-6)
@@ -102,7 +102,7 @@ class TestTheorem1:
     @mark.parametrize("name,build,n", EXPERIMENTS)
     def test_it_holds_for_an_arbitrary_element_of_the_subspace(self, name, build, n):
         r'''The theorem covers every `\mu = P^{-1}\hat{v}`, which need not be a density matrix.'''
-        channel, rho = build(n, 1e-3)
+        channel, rho = build(n, 1.0)
         model = ReducedModel(channel, rho)
         d = model.nqb.dim()
 
@@ -125,7 +125,7 @@ class TestTheorem1:
             ``pinv`` derives the real-field `L^+ = ((LL^T)^{-1}L)^T`, while over `CC` the basis is
             orthonormal only in the Hermitian sense; this pins that ``find_in`` conjugates anyway.
         '''
-        channel, rho = build(n, 1e-3)
+        channel, rho = build(n, 1.0)
         model = ReducedModel(channel, rho)
 
         state = rho
@@ -140,7 +140,7 @@ class TestTheorem1:
             Without this the test above proves nothing about conjugation: Grover's basis comes out
             numerically real even under noise, so MaxCut's diagonal phases are what exercise it.
         '''
-        model = ReducedModel(*build(n, 1e-3))
+        model = ReducedModel(*build(n, 1.0))
 
         assert np.abs(model.L.imag).max() > 1e-3
 

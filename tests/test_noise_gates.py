@@ -21,7 +21,7 @@ from qiskit.quantum_info import Operator
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "papers", "noise"))
 
 from circuits import (  # noqa: E402
-    CX, CZ, DURATIONS, H, I, SX, X, RZ, cz, depolarizing_gate, embed1, embed2, embedN,
+    CX, CZ, ERROR_RATES, H, I, SX, X, RZ, cz, depolarizing_gate, embed1, embed2, embedN,
     from_qiskit, hadamard_layer, noisy_circuit, prepare, rz, sx, x, zero_state, _pauli_basis,
 )
 from stress_grover import (  # noqa: E402
@@ -134,9 +134,9 @@ class TestFromQiskit:
         assert {g.name for g in gates} <= {"cz", "rz", "sx"}
         assert_same_up_to_phase(unitary(gates, 3), Operator(circuit(3, lambda c: c.ccx(0, 1, 2))).data)
 
-    def test_durations_come_from_the_table(self):
+    def test_error_rates_come_from_the_table(self):
         gates = from_qiskit(circuit(2, lambda c: c.cx(0, 1)))
-        assert all(g.duration == DURATIONS[g.name] for g in gates)
+        assert all(g.error == ERROR_RATES[g.name] for g in gates)
 
     def test_rejects_a_basis_gate_without_a_matrix(self):
         with raises(ValueError, match="BASIS_GATES"):
@@ -155,7 +155,7 @@ class TestDepolarizingNoise:
     def test_matches_the_closed_form(self, n, gate, lam):
         r'''qiskit's convention: `(1-lam) U rho U^dag + lam tr(rho) I/2^k`, on the gate's own qubits.'''
         k = len(gate.qubits)
-        operator = depolarizing_gate(gate, n, lam * DURATIONS["sx"] / gate.duration)
+        operator = depolarizing_gate(gate, n, lam / gate.error)
         rho = random_density(n)
         U = dense(embedN(gate.matrix, gate.qubits, n))
         paulis = [dense(embedN(P, gate.qubits, n)) for P in _pauli_basis(k)]
@@ -166,7 +166,7 @@ class TestDepolarizingNoise:
         assert evolve(operator, rho, n) == approx(want, abs=1e-10)
 
     def test_virtual_rz_is_exactly_noiseless(self):
-        r'''`RZ` is a phase-frame change: zero duration, so zero noise, with no special case.'''
+        r'''`RZ` is a phase-frame change: zero reported error, so zero noise, with no special case.'''
         operator = depolarizing_gate(rz(0.7, 0), 1, 0.5)
         rho, R = random_density(1), dense(RZ(0.7))
         assert evolve(operator, rho, 1) == approx(R @ rho @ R.conj().T, abs=1e-12)
@@ -174,7 +174,7 @@ class TestDepolarizingNoise:
     @mark.parametrize("n, build", [(1, lambda c: c.h(0)), (2, lambda c: c.rzz(0.4, 0, 1)), (3, lambda c: c.ccx(0, 1, 2))])
     def test_stays_a_density_matrix(self, n, build):
         gates = from_qiskit(circuit(n, build))
-        out = evolve(noisy_circuit(gates, n, 0.02), random_density(n), n)
+        out = evolve(noisy_circuit(gates, n, 20.0), random_density(n), n)
         assert np.trace(out) == approx(1, abs=1e-10)
         assert out == approx(out.conj().T, abs=1e-10)
         assert min(np.linalg.eigvalsh(out)) > -1e-10

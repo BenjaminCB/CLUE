@@ -146,22 +146,24 @@ def RZ(theta: float) -> Circuit:
     M.increment(1,1, CC(complex(cos(theta/2),  sin(theta/2))))
     return M
 
-## Device-typical gate durations, in nanoseconds. `rz` is exactly 0 because a virtual gate cannot
-## fail; the others are the whole reason the 1-qubit/2-qubit noise ratio is a documented device
-## parameter here rather than a second free knob.
+## Device-reported gate error rates. `rz` is exactly 0 because a virtual gate cannot fail; the
+## others fix the 1-qubit/2-qubit noise ratio as a documented device parameter rather than a second
+## free knob.
 ##
-## Medians of `gate_length` over all qubits / couplings in the calibration snapshots shipped with
-## qiskit-ibm-runtime 0.51.0 (`fake_provider/backends/<name>/props_<name>.json`, 2025-02-26).
-DURATIONS = {"rz": 0.0, "sx": 24.0, "x": 24.0, "cz": 84.0} # ibm_fez (Heron r2)
-# DURATIONS = {"rz": 0.0, "sx": 32.0, "x": 32.0, "cz": 68.0} # ibm_torino (Heron r1)
-# DURATIONS = {"rz": 0.0, "sx": 36.0, "x": 36.0, "cz": 68.0} # ibm_marrakesh (Heron r2)
+## Median error rates of ibm_boston (Heron r3) as shown on the IBM Quantum Platform on 2026-10-28.
+## `cz` is the isolated 2-qubit error, not the layered one; IBM reports `sx` and `x` as equal.
+ERROR_RATES = {"rz": 0.0, "sx": 1.552e-4, "x": 1.552e-4, "cz": 1.206e-3} # ibm_boston (Heron r3)
+
+def scaled_error_rates(epsilon: float) -> dict[str, float]:
+    r'''The depolarising parameter each basis gate gets at stress level ``epsilon``.'''
+    return {name: epsilon * rate for name, rate in ERROR_RATES.items()}
 
 class Gate(NamedTuple):
     r'''
         One gate of a circuit, kept *un-embedded*: ``matrix`` is `2^k \times 2^k` for the ``k``
         qubits in ``qubits``, so the noise model can see which qubits the gate acts on (a
-        depolarising twirl has to be placed on exactly those). ``duration`` is in nanoseconds and
-        is what sets the noise strength.
+        depolarising twirl has to be placed on exactly those). ``error`` is the device-reported
+        error rate, which ``epsilon`` scales to give the noise strength.
 
         Gate lists are in **time order**: the first element is applied first, matching
         ``DensityOperator(operators=...)``, which :func:`DensityVector.apply_matrix` walks in list
@@ -169,16 +171,16 @@ class Gate(NamedTuple):
     '''
     matrix: Circuit
     qubits: tuple[int, ...]
-    duration: float
+    error: float
     name: str
 
-def rz(theta: float, q: int) -> Gate: return Gate(RZ(theta), (q,), DURATIONS["rz"], "rz")
-def sx(q: int) -> Gate:               return Gate(SX, (q,), DURATIONS["sx"], "sx")
-def x(q: int) -> Gate:                return Gate(X, (q,), DURATIONS["x"], "x")
-def cz(c: int, t: int) -> Gate:       return Gate(CZ, (c, t), DURATIONS["cz"], "cz")
+def rz(theta: float, q: int) -> Gate: return Gate(RZ(theta), (q,), ERROR_RATES["rz"], "rz")
+def sx(q: int) -> Gate:               return Gate(SX, (q,), ERROR_RATES["sx"], "sx")
+def x(q: int) -> Gate:                return Gate(X, (q,), ERROR_RATES["x"], "x")
+def cz(c: int, t: int) -> Gate:       return Gate(CZ, (c, t), ERROR_RATES["cz"], "cz")
 
 ## The basis gates `from_qiskit` can turn into `Gate`s, by qiskit name. Adding a gate to a basis
-## means adding it here and giving it a duration in `DURATIONS`.
+## means adding it here and giving it an error rate in `ERROR_RATES`.
 BASIS_GATES = {"rz": rz, "sx": sx, "x": x, "cz": cz}
 
 ## --------------------------------------------------------------------------
@@ -186,7 +188,7 @@ BASIS_GATES = {"rz": rz, "sx": sx, "x": x, "cz": cz}
 ##
 ## Circuits are written as qiskit `QuantumCircuit`s and transpiled by qiskit, so any gate qiskit
 ## knows can be used and any subset of `BASIS_GATES` can be the target basis. Only the *gate list*
-## comes from qiskit: matrices and durations are ours, so the noise model stays in this file.
+## comes from qiskit: matrices and error rates are ours, so the noise model stays in this file.
 ## --------------------------------------------------------------------------
 def from_qiskit(circuit: QuantumCircuit, basis: Sequence[str] = ("cz", "rz", "sx", "x")) -> list[Gate]:
     r'''
@@ -204,7 +206,7 @@ def from_qiskit(circuit: QuantumCircuit, basis: Sequence[str] = ("cz", "rz", "sx
     '''
     unknown = [name for name in basis if name not in BASIS_GATES]
     if unknown:
-        raise ValueError(f"No matrix/duration for basis gate(s) {unknown}; add them to BASIS_GATES")
+        raise ValueError(f"No matrix/error rate for basis gate(s) {unknown}; add them to BASIS_GATES")
 
     transpiled = transpile(circuit, basis_gates=list(basis), optimization_level=0)
     n = transpiled.num_qubits
@@ -240,11 +242,12 @@ def _embedded_paulis(qubits: tuple[int, ...], n: int) -> tuple[Circuit, ...]:
         _EMBEDDED_PAULIS[key] = tuple(embedN(P, qubits, n) for P in _pauli_basis(len(qubits)))
     return _EMBEDDED_PAULIS[key]
 
-def depolarizing_gate(gate: Gate, n: int, epsilon: float, *, reference: float | None = None) -> DensityOperator:
+def depolarizing_gate(gate: Gate, n: int, epsilon: float) -> DensityOperator:
     r'''
         Depolarising noise on a single ``gate`` of an ``n``-qubit register.
 
-        The depolarising parameter comes from the gate's duration,
+        The depolarising parameter is the gate's device-reported error rate scaled by ``epsilon``,
+        `\lambda = \epsilon\, r_{\text{gate}}`, so ``epsilon=1`` is the device as reported.
 
         The channel follows **qiskit's** convention, i.e. that of ``depolarizing_error(lam, k)``:
 
@@ -256,8 +259,9 @@ def depolarizing_gate(gate: Gate, n: int, epsilon: float, *, reference: float | 
         `1-\lambda+\lambda/4^k` on the identity and `\lambda/4^k` on each of the rest. 
     '''
     U = embedN(gate.matrix, gate.qubits, n)
-    t_reference = DURATIONS["sx"] if reference is None else reference
-    lam = epsilon * gate.duration / t_reference
+    lam = epsilon * gate.error
+    if lam > 1:
+        raise ValueError(f"epsilon={epsilon:g} gives '{gate.name}' a depolarising parameter {lam:g} > 1")
     if lam == 0: # virtual gate, or no noise at all: a single unitary branch
         return DensityOperator(circuits=[U], probabilities=[1.0])
 
@@ -266,7 +270,7 @@ def depolarizing_gate(gate: Gate, n: int, epsilon: float, *, reference: float | 
     probabilities = [1 - lam + weight] + (len(paulis) - 1)*[weight]
     return DensityOperator(circuits=[P * U for P in paulis], probabilities=probabilities)
 
-def noisy_circuit(gates: Sequence[Gate], n: int, epsilon: float, *, reference: float | None = None) -> DensityOperator:
+def noisy_circuit(gates: Sequence[Gate], n: int, epsilon: float) -> DensityOperator:
     r'''
         Compose a time-ordered gate list into one noisy super-operator, one depolarising channel per
         gate.
@@ -277,7 +281,7 @@ def noisy_circuit(gates: Sequence[Gate], n: int, epsilon: float, *, reference: f
     '''
     if len(gates) == 0:
         return DensityOperator.eye(4**n)
-    return DensityOperator(operators=[depolarizing_gate(g, n, epsilon, reference=reference) for g in gates])
+    return DensityOperator(operators=[depolarizing_gate(g, n, epsilon) for g in gates])
 
 ## --------------------------------------------------------------------------
 ## Common structure for the stress tests
@@ -299,7 +303,7 @@ def hadamard_layer(n: int) -> QuantumCircuit:
     circuit.h(range(n))
     return circuit
 
-def prepare(gates: Sequence[Gate], n: int, epsilon: float, *, reference: float | None = None) -> DensityVector:
+def prepare(gates: Sequence[Gate], n: int, epsilon: float) -> DensityVector:
     r'''
         Run a preparation circuit **once**, noisily, on `\ket{0\ldots0}`.
 
@@ -311,4 +315,4 @@ def prepare(gates: Sequence[Gate], n: int, epsilon: float, *, reference: float |
     rho = DensityVector.from_tensor(zero_state(n))
     if len(gates) == 0:
         return rho
-    return rho.apply_matrix(noisy_circuit(gates, n, epsilon, reference=reference))
+    return rho.apply_matrix(noisy_circuit(gates, n, epsilon))

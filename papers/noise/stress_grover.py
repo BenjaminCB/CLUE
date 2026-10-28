@@ -12,17 +12,17 @@ from clue.quantum_linalg import DensityOperator, DensityVector
 from qiskit import QuantumCircuit
 from qiskit.circuit.library import ZGate
 
-from circuits import kron_pow, H, from_qiskit, hadamard_layer, noisy_circuit, prepare
+from circuits import kron_pow, H, from_qiskit, hadamard_layer, noisy_circuit, prepare, scaled_error_rates
 from results import append_row
 
 CSV_HEADER = [
     "qubits", "state_dim", "iterations", "target", "epsilon", "delta",
     "time_lumping", "memory_mb", "ambient_dim", "reduced_dim", "red_ratio", "gate",
-    "noise_model", "gate_count", "prep_gate_count",
+    "noise_model", "error_cz", "error_sx", "error_x", "gate_count", "prep_gate_count",
 ]
 
-NOISE_MODEL = "depolarizing-per-gate-ibm" # recorded per row: `epsilon` means something different
-                                         # here than in the older block-level results
+NOISE_MODEL = "depolarizing-per-gate-ibm-boston-rates" # recorded per row: `epsilon` scales the
+                                                     # reported error rates here, unlike older results
 
 ## --------------------------------------------------------------------------
 ## Grover circuit
@@ -139,16 +139,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--min-qubits", type=int, default=2, help="smallest register size to try (default: 2)")
     parser.add_argument("--max-qubits", type=int, default=6, help="largest register size to try (default: 6; the repeated operator is one Grover iteration, whose MCZ is synthesised by qiskit without ancillas)")
-    parser.add_argument("--epsilon", type=float, default=1e-3, help="depolarizing parameter of one SX-length gate; each gate gets epsilon*duration/duration_sx, so RZ is noiseless and CZ is ~3.5x SX (default: 1e-3)")
+    parser.add_argument("--epsilon", type=float, default=1.0, help="scaling of the ibm_boston median error rates; each gate gets depolarizing parameter epsilon*error_rate, so 1 is the device as reported and RZ is noiseless (default: 1)")
     parser.add_argument("--delta", type=float, default=1e-6, help="absorption threshold for NumericalSubspace (default: 1e-6)")
     parser.add_argument("--max-seconds", type=float, default=30.0, help="stop the sweep after a size takes longer than this (checked between sizes, not mid-computation; default: 30s)")
     parser.add_argument("--csv", type=str, default=None, help="append results to this CSV file (created with a header if new)")
     args = parser.parse_args()
 
     print("Stress test: noisy quantum bisimulation on Grover's algorithm")
-    print("noise: depolarizing, per gate, IBM Heron basis {CZ, RZ, SX, X}")
+    print("noise: depolarizing, per gate, IBM Heron basis {CZ, RZ, SX, X}, ibm_boston error rates")
     print("structure: noisy preparation once from |0...0>, then the oracle/diffuser loop is iterated")
+    rates = scaled_error_rates(args.epsilon)
     print(f"epsilon={args.epsilon:g}  delta={args.delta:g}  max-seconds/size={args.max_seconds:g}")
+    print(f"simulated error rates: cz={rates['cz']:.4g}  sx={rates['sx']:.4g}  x={rates['x']:.4g}  rz={rates['rz']:.4g}")
     print(f"{'qubits':>6} {'|states>':>9} {'iters':>6} {'A gates':>8} {'time (s)':>10} {'lumped':>8} {'ambient':>9} {'ratio':>8} {'factor':>10}")
     sys.stdout.flush()
 
@@ -168,7 +170,7 @@ def main():
             append_row(args.csv, CSV_HEADER, [
                 result["qubits"], result["state_dim"], result["iterations"], result["target"], args.epsilon,
                 args.delta, result["time"], result["memory"], result["ambient_dim"], result["reduced_dim"],
-                ratio, f"target={result['target']}", NOISE_MODEL, result["gate_count"],
+                ratio, f"target={result['target']}", NOISE_MODEL, rates["cz"], rates["sx"], rates["x"], result["gate_count"],
                 result["prep_gate_count"],
             ])
 
