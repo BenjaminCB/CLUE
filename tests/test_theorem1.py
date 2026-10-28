@@ -34,27 +34,18 @@ def grover(n: int, epsilon: float) -> tuple[DensityOperator, DensityVector]:
     return (noisy_circuit(from_qiskit(iteration_circuit(n, 2**n - 1)), n, epsilon),
             prepare(from_qiskit(hadamard_layer(n)), n, epsilon))
 
-_DEGENERATE_BASIS = mark.xfail(
-    strict=True,
-    reason="noisy Grover n=3: the engine returns d=64 of an ambient 64 with cond(L)=4.1e17 while "
-           "the dense Krylov rank is 11-20, so Theorem 1's orthonormality premise fails there.",
-)
-
-## Specific to NOISY Grover n=3 (at epsilon=0 it is clean), so the mark is per (experiment, epsilon).
 EXPERIMENTS = [
     param("maxcut", maxcut, 2, id="maxcut-2"),
     param("maxcut", maxcut, 3, id="maxcut-3"),
     param("grover", grover, 2, id="grover-2"),
-    param("grover", grover, 3, id="grover-3", marks=_DEGENERATE_BASIS),
+    param("grover", grover, 3, id="grover-3"),
 ]
 
-DYNAMICS = (
-    [param(k, b, n, eps, id=f"{k}-{n}-eps{eps:g}")
-     for (k, b, n) in [("maxcut", maxcut, 2), ("maxcut", maxcut, 3), ("grover", grover, 2)]
-     for eps in (0.0, 1.0)]
-    + [param("grover", grover, 3, 0.0, id="grover-3-eps0"),
-       param("grover", grover, 3, 1.0, id="grover-3-eps1", marks=_DEGENERATE_BASIS)]
-)
+DYNAMICS = [
+    param(k, b, n, eps, id=f"{k}-{n}-eps{eps:g}")
+    for (k, b, n) in [("maxcut", maxcut, 2), ("maxcut", maxcut, 3), ("grover", grover, 2), ("grover", grover, 3)]
+    for eps in (0.0, 1.0)
+]
 
 class ReducedModel:
     r'''`P`, `\hat{C}` and `P^{-1}` for one (channel, rho) pair.'''

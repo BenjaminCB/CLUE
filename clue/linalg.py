@@ -2048,23 +2048,26 @@ class OrthogonalSubspace(Subspace):
         vector and its orthogonal projection, implying the reduced vector is orthogonal to
         the subspace if and only if the vector is not in it.
 
-        Let `L` be a `m\times n` matrix where `n` is the ambient space of the subspace and
-        the rows of `L` are the orthonormal basis of ``self``. Then, for any given vector `v`,
-        its orthogonal projection can be computed by
+        Mathematically this is `v - L^T L v` (see :attr:`projector`), but we do not compute it in
+        one shot (classical Gram-Schmidt): when `v` is nearly inside ``self`` the rounding errors of
+        that difference survive the normalization in :func:`absorb_new_vector` and the basis quickly
+        stops being orthonormal on Krylov sequences. Instead we use modified Gram-Schmidt, removing
+        one basis vector `q` at a time from the partially reduced vector,
 
         .. MATH::
 
-            \pi_L(v) = L^T L v
+            v \leftarrow v - \frac{\langle v, q\rangle}{\langle q, q\rangle} q,
 
-        Hence, the reduced version of the vector if simply `v - \pi_L(v)`.
-
-        **Remark 1**: since the basis of ``self`` is orthonormal, then `L L^T` is the `m\times m`
-        identity matrix.
-
-        **Remark 2**: the matrix `L^T L` is of size `n \times n`.
+        and, over floating point fields, we run that loop twice ("twice is enough"): the second pass
+        removes what rounding left behind in the first one, keeping the basis orthonormal to
+        machine precision. Over exact fields one pass is already exact. The basis need not be
+        normalized (over `\mathbb{Q}` it is only scaled), hence the division by `\langle q, q\rangle`.
 
         Hence, if a reduced vector is not zero, we can add its normalized version to self to obtain a new
         orthonormal basis for the space containing ``self`` and the original vector.
+
+        **Remark**: :func:`_should_absorb` only sees the reduced vector, so a threshold relative to
+        the norm of the original vector would need :func:`absorb_new_vector` to pass that norm along.
 
         This method computes the reduced vector in-place. This means the input ``vector`` is
         changed in the execution of this method.
@@ -2080,18 +2083,13 @@ class OrthogonalSubspace(Subspace):
 
         TODO: add examples
         """
-        if not vector.is_zero() and self.dim() > 0:
-            # first we compute the projection of the vector
-            pi_v = vector.apply_matrix(self.projector)
-            # we then compute the difference
-            vector.reduce(-self.field.one, pi_v)
-        ## This is a modified Gram-Schmidt algorithm
-        # for (_, basis) in self.echelon_form.items():
-        #     if vector.is_zero():
-        #         break
-        #     proj = basis*(vector.inner_product(basis) / basis.inner_product(basis))
-        #     vector.reduce(-1, proj)
-        
+        passes = 2 if self.field in (RR, CC) else 1
+        for _ in range(passes):
+            for basis in self.echelon_form.values():
+                if vector.is_zero():
+                    return vector
+                vector.reduce(-vector.inner_product(basis) / basis.inner_product(basis), basis)
+
         return vector
 
     def find_in(self, vector: Vector) -> Vector:
