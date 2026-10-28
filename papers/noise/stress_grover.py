@@ -9,7 +9,10 @@ from clue.linalg import SparseRowMatrix as Circuit, SparseVector as State, Numer
 from clue.numerical_domains import CC
 from clue.quantum_linalg import DensityOperator, DensityVector
 
-from circuits import Gate, kron_pow, H, h, hadamard_layer, mcz, noisy_circuit, prepare, x
+from qiskit import QuantumCircuit
+from qiskit.circuit.library import ZGate
+
+from circuits import kron_pow, H, from_qiskit, hadamard_layer, noisy_circuit, prepare
 from results import append_row
 
 CSV_HEADER = [
@@ -48,31 +51,48 @@ def initial_state(n: int) -> State:
     return v.apply_matrix(kron_pow(H, n))
 
 ## The two functions above build the oracle and diffuser as single collapsed matrices. They are kept
-## because `tests/` cross-checks the gate decompositions below against them, but the stress test no
-## longer uses them: noise has to act on the gates that *implement* these blocks, not on the blocks.
-def oracle_gates(n: int, target: int) -> list[Gate]:
-    r'''
-        Phase-flip oracle, in the IBM basis. `MCZ` flips the sign of `\ket{1\ldots1}`, so conjugating
-        with an `X` on every qubit where ``target`` has a 0 bit moves the flip onto ``target``.
-    '''
-    flips = [x(q) for q in range(n) if not ((target >> (n-1-q)) & 1)]
-    return flips + mcz(range(n)) + flips
+## because `tests/` cross-checks the circuits below against them, but the stress test no longer
+## uses them: noise has to act on the gates that *implement* these blocks, not on the blocks.
+##
+## The circuits use qiskit's little-endian qubit order (qubit ``q`` is bit ``q`` of the state
+## index); `from_qiskit` maps them onto ours.
+def mcz(n: int) -> QuantumCircuit:
+    r'''Multi-controlled `Z` on all ``n`` qubits: a phase flip on `\ket{1\ldots1}`.'''
+    circuit = QuantumCircuit(n)
+    circuit.append(ZGate().control(n-1, annotated=True) if n > 1 else ZGate(), range(n))
+    return circuit
 
-def diffuser_gates(n: int) -> list[Gate]:
+def oracle_circuit(n: int, target: int) -> QuantumCircuit:
     r'''
-        `2\ket{s}\bra{s} - I = H^{\otimes n}(2\ket{0}\bra{0} - I)H^{\otimes n}` in the IBM basis.
+        Phase-flip oracle. `MCZ` flips the sign of `\ket{1\ldots1}`, so conjugating with an `X` on
+        every qubit where ``target`` has a 0 bit moves the flip onto ``target``.
+    '''
+    flips = [q for q in range(n) if not ((target >> q) & 1)]
+    circuit = QuantumCircuit(n)
+    if flips: circuit.x(flips)
+    circuit.compose(mcz(n), inplace=True)
+    if flips: circuit.x(flips)
+    return circuit
+
+def diffuser_circuit(n: int) -> QuantumCircuit:
+    r'''
+        `2\ket{s}\bra{s} - I = H^{\otimes n}(2\ket{0}\bra{0} - I)H^{\otimes n}`.
         `2\ket{0}\bra{0} - I` is, up to a global sign, the phase flip on `\ket{0\ldots0}`, i.e.
         `X^{\otimes n}\, MCZ\, X^{\otimes n}`.
     '''
-    layer_h = [gate for q in range(n) for gate in h(q)]
-    layer_x = [x(q) for q in range(n)]
-    return layer_h + layer_x + mcz(range(n)) + layer_x + layer_h
+    circuit = QuantumCircuit(n)
+    circuit.h(range(n))
+    circuit.x(range(n))
+    circuit.compose(mcz(n), inplace=True)
+    circuit.x(range(n))
+    circuit.h(range(n))
+    return circuit
 
-def prep_gates(n: int) -> list[Gate]:
+def prep_circuit(n: int) -> QuantumCircuit:
     r'''State preparation, run **once**: the uniform superposition over all `2^n` basis states.'''
     return hadamard_layer(n)
 
-def iteration_gates(n: int, target: int) -> list[Gate]:
+def iteration_circuit(n: int, target: int) -> QuantumCircuit:
     r'''
         One Grover iteration -- the oracle/diffuser loop -- which is the operator the lumping
         iterates.
@@ -83,7 +103,7 @@ def iteration_gates(n: int, target: int) -> list[Gate]:
         invariant subspace of `G^m` rather than of `G`, and how far the dynamics runs is what the
         Krylov termination discovers by itself.
     '''
-    return oracle_gates(n, target) + diffuser_gates(n)
+    return oracle_circuit(n, target).compose(diffuser_circuit(n))
 
 def optimal_iterations(n: int) -> int:
     r'''Standard Grover iteration count `\lfloor (\pi/4)\sqrt{N}\rfloor` (at least 1).'''
@@ -96,8 +116,8 @@ def run_size(n: int, epsilon: float, delta: float) -> dict:
     N = 2**n
     target = N - 1
 
-    preparation = prep_gates(n)
-    gates = iteration_gates(n, target)
+    preparation = from_qiskit(prep_circuit(n))
+    gates = from_qiskit(iteration_circuit(n, target))
     rho = prepare(preparation, n, epsilon) # noisy, once -- generally a mixed state
     G = noisy_circuit(gates, n, epsilon)   # the repeated operator
 
@@ -118,7 +138,7 @@ def run_size(n: int, epsilon: float, delta: float) -> dict:
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--min-qubits", type=int, default=2, help="smallest register size to try (default: 2)")
-    parser.add_argument("--max-qubits", type=int, default=6, help="largest register size to try (default: 6; the repeated operator is one Grover iteration, whose ancilla-free MCZ is Theta(n^2) gates)")
+    parser.add_argument("--max-qubits", type=int, default=6, help="largest register size to try (default: 6; the repeated operator is one Grover iteration, whose MCZ is synthesised by qiskit without ancillas)")
     parser.add_argument("--epsilon", type=float, default=1e-3, help="depolarizing parameter of one SX-length gate; each gate gets epsilon*duration/duration_sx, so RZ is noiseless and CZ is ~3.5x SX (default: 1e-3)")
     parser.add_argument("--delta", type=float, default=1e-6, help="absorption threshold for NumericalSubspace (default: 1e-6)")
     parser.add_argument("--max-seconds", type=float, default=30.0, help="stop the sweep after a size takes longer than this (checked between sizes, not mid-computation; default: 30s)")

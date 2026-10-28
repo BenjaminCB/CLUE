@@ -2,28 +2,33 @@ r'''
 Cross-checks for the gate-level circuits in ``papers/noise``.
 
 The stress tests there used to apply noise to whole blocks (Grover's oracle and diffuser, the
-MaxCut cost layer) built as single collapsed matrices. They now build the same operators out of
-IBM-basis gates so that noise can act on each gate, which is what the NQB draft actually specifies
-("noisy quantum circuits arise by composing noisy quantum gates"). These tests pin the
-decompositions to the collapsed matrices they replaced.
+MaxCut cost layer) built as single collapsed matrices. They now write the same operators as qiskit
+circuits, transpiled to the IBM basis, so that noise can act on each gate, which is what the NQB
+draft actually specifies ("noisy quantum circuits arise by composing noisy quantum gates"). These
+tests pin ``from_qiskit`` to qiskit's own matrices and the circuits to the collapsed matrices they
+replaced.
 
 Global phases are irrelevant throughout: the circuits are only ever used as `rho -> U rho U^dagger`.
 '''
 import os, sys
 
 import numpy as np
-from pytest import approx, mark
+from pytest import approx, mark, raises
+from qiskit import QuantumCircuit
+from qiskit.circuit.random import random_circuit
+from qiskit.quantum_info import Operator
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "papers", "noise"))
 
 from circuits import (  # noqa: E402
-    CX, CZ, DURATIONS, H, I, SX, X, Z, RZ, ccx, ccz, cp, cx, cz, depolarizing_gate, embed1, embed2, embedN,
-    h, hadamard_layer, mcp, mcz, noisy_circuit, prepare, rx, rz, rzz, sx, x, zero_state,
-    _mcx, _pauli_basis,
+    CX, CZ, DURATIONS, H, I, SX, X, RZ, cz, depolarizing_gate, embed1, embed2, embedN,
+    from_qiskit, hadamard_layer, noisy_circuit, prepare, rz, sx, x, zero_state, _pauli_basis,
 )
-from stress_grover import diffuser, diffuser_gates, initial_state, iteration_gates, oracle, oracle_gates  # noqa: E402
+from stress_grover import (  # noqa: E402
+    diffuser, diffuser_circuit, initial_state, iteration_circuit, oracle, oracle_circuit,
+)
 from stress_qaoa_maxcut import (  # noqa: E402
-    cost_gates, cost_unitary, cut_difference_count, cut_matrix, cut_values, random_graph, run_size,
+    cost_circuit, cost_unitary, cut_difference_count, cut_matrix, cut_values, random_graph, run_size,
 )
 
 def dense(matrix) -> np.ndarray:
@@ -42,6 +47,12 @@ def assert_same_up_to_phase(got: np.ndarray, want: np.ndarray, tol: float = 1e-8
     phase = got[pivot] / want[pivot]
     assert abs(phase) == approx(1, abs=tol)
     assert got == approx(phase * want, abs=tol)
+
+def circuit(n: int, build) -> QuantumCircuit:
+    r'''A fresh ``n``-qubit qiskit circuit, filled in by ``build``.'''
+    result = QuantumCircuit(n)
+    build(result)
+    return result
 
 def mcx_matrix(controls, target: int, n: int) -> np.ndarray:
     control_mask = sum(1 << (n-1-q) for q in controls)
@@ -83,75 +94,61 @@ class TestIBMBasis:
     def test_sx_squares_to_x(self):
         assert dense(SX) @ dense(SX) == approx(dense(X))
 
-    def test_h_decomposition(self):
-        assert_same_up_to_phase(unitary(h(0), 1), dense(H))
-
     def test_cz_is_symmetric(self):
         assert dense(embedN(CZ, (0, 1), 2)) == approx(dense(embedN(CZ, (1, 0), 2)))
 
-    @mark.parametrize("c, t, n", [(0, 1, 2), (1, 0, 2), (0, 2, 3), (2, 0, 3)])
-    def test_cx_decomposition(self, c, t, n):
-        assert_same_up_to_phase(unitary(cx(c, t), n), mcx_matrix([c], t, n))
-
-    @mark.parametrize("theta", [0.0, 0.7, -1.3, np.pi])
-    def test_rx_decomposition(self, theta):
-        want = np.array([[np.cos(theta/2), -1j*np.sin(theta/2)], [-1j*np.sin(theta/2), np.cos(theta/2)]])
-        assert_same_up_to_phase(unitary(rx(theta, 0), 1), want)
-
-    @mark.parametrize("theta", [0.6, -2.1])
-    def test_rzz_decomposition(self, theta):
-        ZZ = np.kron(dense(Z), dense(Z))
-        want = np.cos(theta/2)*np.eye(4) - 1j*np.sin(theta/2)*ZZ
-        assert_same_up_to_phase(unitary(rzz(theta, 0, 1), 2), want)
-
-    @mark.parametrize("phi", [0.5, np.pi/2, np.pi, -0.9])
-    def test_cp_decomposition(self, phi):
-        assert_same_up_to_phase(unitary(cp(phi, 0, 1), 2), np.diag([1, 1, 1, np.exp(1j*phi)]))
-
-    def test_ccz_and_ccx(self):
-        assert_same_up_to_phase(unitary(ccz(0, 1, 2), 3), np.diag([1, 1, 1, 1, 1, 1, 1, -1]))
-        for (a, b, c) in [(0, 1, 2), (2, 0, 1), (1, 2, 0)]:
-            assert_same_up_to_phase(unitary(ccx(a, b, c), 3), mcx_matrix([a, b], c, 3))
-
-class TestBarencoMultiControlled:
+class TestFromQiskit:
     r'''
-    Barenco et al., "Elementary gates for quantum computation" (Phys. Rev. A 52, 3457, 1995).
-
-    The work qubits these borrow are *dirty*: they hold unknown values and have to be returned
-    untouched. Comparing over the whole register rather than a subspace is what makes that
-    observable -- a work qubit left flipped cannot hide behind a global phase.
+    ``from_qiskit`` maps qiskit qubit ``q`` to our ``n-1-q``, so a converted circuit must have
+    exactly the matrix ``Operator`` gives the qiskit one, with no qubit reversal. Asymmetric gates
+    (CX, CCX with the target in every position) are what would catch a wrong mapping.
     '''
-    @mark.parametrize("n, controls", [(5, 3), (6, 3), (6, 4), (7, 3), (7, 4), (7, 5)])
-    def test_mcx_with_borrowed_work_qubits(self, n, controls):
-        control_list, target = list(range(controls)), controls
-        free = [q for q in range(n) if q not in control_list and q != target]
-        assert_same_up_to_phase(unitary(_mcx(control_list, target, free), n),
-                                mcx_matrix(control_list, target, n))
+    @mark.parametrize("n, build", [
+        (1, lambda c: c.h(0)),
+        (1, lambda c: c.rx(0.7, 0)),
+        (2, lambda c: c.cx(0, 1)),
+        (2, lambda c: c.cx(1, 0)),
+        (2, lambda c: c.rzz(-0.6, 0, 1)),
+        (2, lambda c: c.cp(0.9, 0, 1)),
+        (3, lambda c: c.ccx(0, 1, 2)),
+        (3, lambda c: c.ccx(2, 0, 1)),
+        (3, lambda c: c.ccx(1, 2, 0)),
+        (5, lambda c: c.mcx([0, 1, 2, 3], 4)),
+    ])
+    def test_matches_qiskits_operator(self, n, build):
+        qc = circuit(n, build)
+        assert_same_up_to_phase(unitary(from_qiskit(qc), n), Operator(qc).data)
 
-    @mark.parametrize("n, controls", [(5, 3), (6, 4), (7, 5)])
-    def test_mcx_restores_work_qubits_in_superposition(self, n, controls):
-        control_list, target = list(range(controls)), controls
-        free = [q for q in range(n) if q not in control_list and q != target]
-        got = unitary(_mcx(control_list, target, free), n)
-        want = mcx_matrix(control_list, target, n)
-        rng = np.random.default_rng(0)
-        state = rng.normal(size=2**n) + 1j*rng.normal(size=2**n)
-        state /= np.linalg.norm(state)
-        assert_same_up_to_phase(np.outer(got @ state, (got @ state).conj()),
-                                np.outer(want @ state, (want @ state).conj()))
+    @mark.parametrize("n, seed", [(1, 0), (2, 1), (3, 2), (4, 3)])
+    def test_matches_qiskits_operator_on_random_circuits(self, n, seed):
+        qc = random_circuit(n, depth=4, seed=seed)
+        assert_same_up_to_phase(unitary(from_qiskit(qc), n), Operator(qc).data)
 
-    @mark.parametrize("n", [2, 3, 4, 5, 6])
-    @mark.parametrize("phi", [np.pi, 0.7])
-    def test_multi_controlled_phase_uses_no_ancilla(self, n, phi):
-        want = np.eye(2**n, dtype=complex)
-        want[-1, -1] = np.exp(1j*phi)
-        assert_same_up_to_phase(unitary(mcp(phi, range(n)), n), want)
+    def test_qubit_zero_is_the_least_significant_bit(self):
+        r'''An ``X`` on qiskit qubit 0 flips bit 0 of the state index, which is our qubit ``n-1``.'''
+        gates = from_qiskit(circuit(3, lambda c: c.x(0)))
+        assert [(g.name, g.qubits) for g in gates] == [("x", (2,))]
 
-    @mark.parametrize("n", [2, 3, 4, 5, 6])
-    def test_mcz(self, n):
-        want = np.eye(2**n, dtype=complex)
-        want[-1, -1] = -1
-        assert_same_up_to_phase(unitary(mcz(range(n)), n), want)
+    def test_emits_only_the_requested_basis(self):
+        gates = from_qiskit(circuit(3, lambda c: c.ccx(0, 1, 2)), basis=("cz", "rz", "sx"))
+        assert {g.name for g in gates} <= {"cz", "rz", "sx"}
+        assert_same_up_to_phase(unitary(gates, 3), Operator(circuit(3, lambda c: c.ccx(0, 1, 2))).data)
+
+    def test_durations_come_from_the_table(self):
+        gates = from_qiskit(circuit(2, lambda c: c.cx(0, 1)))
+        assert all(g.duration == DURATIONS[g.name] for g in gates)
+
+    def test_rejects_a_basis_gate_without_a_matrix(self):
+        with raises(ValueError, match="BASIS_GATES"):
+            from_qiskit(circuit(1, lambda c: c.h(0)), basis=("cz", "rz", "sx", "x", "h"))
+
+    def test_rejects_non_unitary_instructions(self):
+        with raises(ValueError, match="reset"):
+            from_qiskit(circuit(1, lambda c: c.reset(0)))
+
+    def test_skips_barriers(self):
+        gates = from_qiskit(circuit(2, lambda c: (c.x(0), c.barrier(), c.x(1))))
+        assert [g.qubits for g in gates] == [(1,), (0,)]
 
 class TestDepolarizingNoise:
     @mark.parametrize("n, gate, lam", [(1, sx(0), 0.1), (2, cz(0, 1), 0.2), (3, x(2), 0.05), (3, cz(2, 0), 0.3)])
@@ -174,34 +171,38 @@ class TestDepolarizingNoise:
         rho, R = random_density(1), dense(RZ(0.7))
         assert evolve(operator, rho, 1) == approx(R @ rho @ R.conj().T, abs=1e-12)
 
-    @mark.parametrize("n, gates", [(1, h(0)), (2, rzz(0.4, 0, 1)), (3, ccx(0, 1, 2))])
-    def test_stays_a_density_matrix(self, n, gates):
+    @mark.parametrize("n, build", [(1, lambda c: c.h(0)), (2, lambda c: c.rzz(0.4, 0, 1)), (3, lambda c: c.ccx(0, 1, 2))])
+    def test_stays_a_density_matrix(self, n, build):
+        gates = from_qiskit(circuit(n, build))
         out = evolve(noisy_circuit(gates, n, 0.02), random_density(n), n)
         assert np.trace(out) == approx(1, abs=1e-10)
         assert out == approx(out.conj().T, abs=1e-10)
         assert min(np.linalg.eigvalsh(out)) > -1e-10
 
-    @mark.parametrize("n, gates", [(2, rzz(0.4, 0, 1)), (3, ccx(0, 1, 2)), (4, mcz(range(4)))])
-    def test_zero_epsilon_reproduces_the_exact_unitary(self, n, gates):
+    @mark.parametrize("n, build", [
+        (2, lambda c: c.rzz(0.4, 0, 1)), (3, lambda c: c.ccx(0, 1, 2)), (4, lambda c: c.mcx([0, 1, 2], 3)),
+    ])
+    def test_zero_epsilon_reproduces_the_exact_unitary(self, n, build):
+        gates = from_qiskit(circuit(n, build))
         rho, U = random_density(n), unitary(gates, n)
         assert evolve(noisy_circuit(gates, n, 0.0), rho, n) == approx(U @ rho @ U.conj().T, abs=1e-9)
 
 class TestStressTestCircuits:
-    r'''The gate lists must implement exactly the blocks the noise used to be applied to.'''
+    r'''The circuits must implement exactly the blocks the noise used to be applied to.'''
     @mark.parametrize("n", [2, 3, 4, 5])
     def test_grover_oracle_for_every_target(self, n):
         for target in range(2**n):
-            assert_same_up_to_phase(unitary(oracle_gates(n, target), n), dense(oracle(n, target)))
+            assert_same_up_to_phase(unitary(from_qiskit(oracle_circuit(n, target)), n), dense(oracle(n, target)))
 
     @mark.parametrize("n", [2, 3, 4, 5])
     def test_grover_diffuser(self, n):
-        assert_same_up_to_phase(unitary(diffuser_gates(n), n), dense(diffuser(n)))
+        assert_same_up_to_phase(unitary(from_qiskit(diffuser_circuit(n)), n), dense(diffuser(n)))
 
     @mark.parametrize("n", [2, 3, 4, 5])
     @mark.parametrize("gamma", [0.7, -1.4])
     def test_qaoa_cost_layer(self, n, gamma):
         edges = random_graph(n, 1.0, 42)
-        assert_same_up_to_phase(unitary(cost_gates(n, edges, gamma), n), dense(cost_unitary(n, edges, gamma)))
+        assert_same_up_to_phase(unitary(from_qiskit(cost_circuit(n, edges, gamma)), n), dense(cost_unitary(n, edges, gamma)))
 
 class TestCommonStructure:
     r'''
@@ -211,7 +212,7 @@ class TestCommonStructure:
     '''
     @mark.parametrize("n", [1, 2, 3, 4, 5])
     def test_hadamard_layer_prepares_the_uniform_superposition(self, n):
-        got = unitary(hadamard_layer(n), n) @ np.array(zero_state(n).to_list(), dtype=complex)
+        got = unitary(from_qiskit(hadamard_layer(n)), n) @ np.array(zero_state(n).to_list(), dtype=complex)
         want = np.array(initial_state(n).to_list(), dtype=complex)
         assert_same_up_to_phase(np.outer(got, got.conj()), np.outer(want, want.conj()))
 
@@ -220,7 +221,7 @@ class TestCommonStructure:
         r'''One oracle+diffuser step, matching the single Grover operator the predecessor lumps.'''
         target = 2**n - 1
         want = dense(diffuser(n)) @ dense(oracle(n, target))
-        assert_same_up_to_phase(unitary(iteration_gates(n, target), n), want)
+        assert_same_up_to_phase(unitary(from_qiskit(iteration_circuit(n, target)), n), want)
 
     @mark.parametrize("n", [2, 3, 4, 5])
     @mark.parametrize("gamma", [1.0, 0.7])
@@ -228,10 +229,10 @@ class TestCommonStructure:
         r'''The noise-free test lumps `cut_matrix` as a generator, so this must be its exponential.'''
         edges = random_graph(n, 1.0, 42)
         want = np.diag(np.exp(-1j * gamma * np.diagonal(dense(cut_matrix(n, edges))).real))
-        assert_same_up_to_phase(unitary(cost_gates(n, edges, gamma), n), want)
+        assert_same_up_to_phase(unitary(from_qiskit(cost_circuit(n, edges, gamma)), n), want)
 
     @mark.parametrize("n", [2, 3])
-    @mark.parametrize("gates_of", [lambda n: hadamard_layer(n)])
+    @mark.parametrize("gates_of", [lambda n: from_qiskit(hadamard_layer(n))])
     def test_noiseless_preparation_is_the_exact_pure_state(self, n, gates_of):
         gates = gates_of(n)
         got = dense(prepare(gates, n, 0.0).as_matrix())
@@ -240,7 +241,7 @@ class TestCommonStructure:
 
     @mark.parametrize("n", [2, 3])
     def test_noisy_preparation_is_a_valid_mixed_state(self, n):
-        rho = dense(prepare(hadamard_layer(n), n, 1e-2).as_matrix())
+        rho = dense(prepare(from_qiskit(hadamard_layer(n)), n, 1e-2).as_matrix())
         assert np.trace(rho) == approx(1, abs=1e-10)
         assert rho == approx(rho.conj().T, abs=1e-10)
         assert min(np.linalg.eigvalsh(rho)) > -1e-10

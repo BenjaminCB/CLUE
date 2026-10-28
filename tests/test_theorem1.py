@@ -15,11 +15,11 @@ from pytest import approx, mark, param, raises
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "papers", "noise"))
 
-from circuits import hadamard_layer, noisy_circuit, prepare  # noqa: E402
+from circuits import from_qiskit, hadamard_layer, noisy_circuit, prepare  # noqa: E402
 from clue.linalg import NumericalSubspace, find_smallest_common_subspace  # noqa: E402
 from clue.quantum_linalg import DensityOperator, DensityVector  # noqa: E402
-from stress_grover import iteration_gates  # noqa: E402
-from stress_qaoa_maxcut import cost_gates, random_graph  # noqa: E402
+from stress_grover import iteration_circuit  # noqa: E402
+from stress_qaoa_maxcut import cost_circuit, random_graph  # noqa: E402
 
 def flat(density_vector: DensityVector) -> np.ndarray:
     r'''The `d^2`-dimensional vector of a density matrix, as the subspace sees it.'''
@@ -27,10 +27,12 @@ def flat(density_vector: DensityVector) -> np.ndarray:
 
 def maxcut(n: int, epsilon: float) -> tuple[DensityOperator, DensityVector]:
     edges = random_graph(n, 1.0, 42)
-    return noisy_circuit(cost_gates(n, edges, 1.0), n, epsilon), prepare(hadamard_layer(n), n, epsilon)
+    return (noisy_circuit(from_qiskit(cost_circuit(n, edges, 1.0)), n, epsilon),
+            prepare(from_qiskit(hadamard_layer(n)), n, epsilon))
 
 def grover(n: int, epsilon: float) -> tuple[DensityOperator, DensityVector]:
-    return noisy_circuit(iteration_gates(n, 2**n - 1), n, epsilon), prepare(hadamard_layer(n), n, epsilon)
+    return (noisy_circuit(from_qiskit(iteration_circuit(n, 2**n - 1)), n, epsilon),
+            prepare(from_qiskit(hadamard_layer(n)), n, epsilon))
 
 _DEGENERATE_BASIS = mark.xfail(
     strict=True,

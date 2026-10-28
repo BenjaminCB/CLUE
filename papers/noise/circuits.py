@@ -2,9 +2,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from functools import lru_cache
 from itertools import combinations
-from math import sqrt, pi, cos, sin
+from math import sqrt, cos, sin
 from typing import NamedTuple
 from numpy import kron
+from qiskit import QuantumCircuit, transpile
 
 from clue.linalg import SparseRowMatrix as Circuit, SparseVector as State
 from clue.numerical_domains import CC
@@ -176,122 +177,48 @@ def sx(q: int) -> Gate:               return Gate(SX, (q,), DURATIONS["sx"], "sx
 def x(q: int) -> Gate:                return Gate(X, (q,), DURATIONS["x"], "x")
 def cz(c: int, t: int) -> Gate:       return Gate(CZ, (c, t), DURATIONS["cz"], "cz")
 
-## --------------------------------------------------------------------------
-## Derived gates, as IBM-basis gate lists
-## --------------------------------------------------------------------------
-def h(q: int) -> list[Gate]:
-    r'''`H = e^{i\pi/4} RZ(\pi/2)\, SX\, RZ(\pi/2)`.'''
-    return [rz(pi/2, q), sx(q), rz(pi/2, q)]
-
-def cx(c: int, t: int) -> list[Gate]:
-    r'''`CX = H_t\, CZ\, H_t`: conjugating by `H` on the target turns its `Z` into an `X`.'''
-    return h(t) + [cz(c, t)] + h(t)
-
-def rx(theta: float, q: int) -> list[Gate]:
-    r'''`RX(\theta) = H\, RZ(\theta)\, H`, which collapses to the standard ZXZXZ form.'''
-    return [rz(pi/2, q), sx(q), rz(theta + pi, q), sx(q), rz(pi/2, q)]
-
-def rzz(theta: float, c: int, t: int) -> list[Gate]:
-    r'''`RZZ(\theta) = e^{-i\theta Z_c Z_t/2} = CX;\, RZ(\theta)_t;\, CX`.'''
-    return cx(c, t) + [rz(theta, t)] + cx(c, t)
-
-def cp(phi: float, p: int, q: int) -> list[Gate]:
-    r'''
-        Controlled phase `\text{diag}(1,1,1,e^{i\phi})`, symmetric in ``p`` and ``q``.
-
-        From `\ket{11}\bra{11} = (I-Z_p)(I-Z_q)/4`, all three factors commuting:
-        `CP(\phi) = e^{i\phi/4} RZ(\phi/2)_p\, RZ(\phi/2)_q\, RZZ(-\phi/2)`.
-    '''
-    return [rz(phi/2, p), rz(phi/2, q)] + rzz(-phi/2, p, q)
-
-def ccz(a: int, b: int, c: int) -> list[Gate]:
-    r'''
-        Doubly-controlled `Z`, via Barenco et al. Lemma 6.1 with `V = P(\pi/2)` (so `V^2 = Z`):
-        `C(V)_{b,c};\, CX_{a,b};\, C(V^\dagger)_{b,c};\, CX_{a,b};\, C(V)_{a,c}`.
-
-        The control/target labels are immaterial -- the result is diagonal and symmetric.
-    '''
-    return (cp(pi/2, b, c) + cx(a, b) + cp(-pi/2, b, c) + cx(a, b) + cp(pi/2, a, c))
-
-def ccx(a: int, b: int, c: int) -> list[Gate]:
-    r'''Toffoli, as `H_c\, CCZ\, H_c`.'''
-    return h(c) + ccz(a, b, c) + h(c)
+## The basis gates `from_qiskit` can turn into `Gate`s, by qiskit name. Adding a gate to a basis
+## means adding it here and giving it a duration in `DURATIONS`.
+BASIS_GATES = {"rz": rz, "sx": sx, "x": x, "cz": cz}
 
 ## --------------------------------------------------------------------------
-## Multi-controlled gates, following Barenco et al.,
-## "Elementary gates for quantum computation" (Phys. Rev. A 52, 3457, 1995).
+## Circuits from qiskit
+##
+## Circuits are written as qiskit `QuantumCircuit`s and transpiled by qiskit, so any gate qiskit
+## knows can be used and any subset of `BASIS_GATES` can be the target basis. Only the *gate list*
+## comes from qiskit: matrices and durations are ours, so the noise model stays in this file.
 ## --------------------------------------------------------------------------
-def _mcx_vchain(controls: Sequence[int], target: int, work: Sequence[int]) -> list[Gate]:
+def from_qiskit(circuit: QuantumCircuit, basis: Sequence[str] = ("cz", "rz", "sx", "x")) -> list[Gate]:
     r'''
-        Barenco et al. Lemma 7.2: `C^k(X)` with ``k-2`` *dirty* work qubits in `4(k-2)` Toffolis.
+        Transpile ``circuit`` to ``basis`` and convert it to a time-ordered list of `Gate`.
 
-        The "V" leg flips ``work[-1]`` by `\text{AND}(controls[:-1])` while leaving the lower work
-        qubits dirty; running ``A V A V`` cancels both the dirty contributions and the spurious
-        target flips, leaving `X` on the target iff every control is 1 and every work qubit restored.
+        Transpilation runs at ``optimization_level=0`` with no coupling map, so qiskit only
+        decomposes: no gates are merged or cancelled, no SWAPs are routed, and no qubits are
+        relabelled. The global phase it introduces is dropped, as it cancels in `\rho \mapsto
+        U\rho U^\dagger`.
+
+        qiskit numbers qubits little-endian (qubit ``q`` is bit ``q`` of a basis-state index) while
+        :func:`embedN` takes qubit 0 as the most significant bit, so qiskit qubit ``q`` becomes our
+        qubit ``n-1-q``. Basis-state indices therefore mean the same thing on both sides, and the
+        result has the same matrix as ``qiskit.quantum_info.Operator(circuit)``.
     '''
-    k = len(controls)
-    leg = ([(controls[j+1], work[j-1], work[j]) for j in range(k-3, 0, -1)]
-           + [(controls[0], controls[1], work[0])])
-    V = leg + list(reversed(leg[:-1]))
-    A = [(controls[k-1], work[k-3], target)]
-    return [gate for (a, b, c) in A + V + A + V for gate in ccx(a, b, c)]
+    unknown = [name for name in basis if name not in BASIS_GATES]
+    if unknown:
+        raise ValueError(f"No matrix/duration for basis gate(s) {unknown}; add them to BASIS_GATES")
 
-def _mcx_split(controls: Sequence[int], target: int, free: Sequence[int]) -> list[Gate]:
-    r'''
-        Barenco et al. Lemma 7.3: `C^k(X)` with a *single* borrowed dirty qubit.
-
-        Split the controls into halves ``A`` and ``B``. Each half then has enough spare qubits --
-        the other half, plus the target or the ancilla -- for a v-chain. Writing `w` for the
-        ancilla's unknown initial value, ``first second first second`` flips the target by
-        `B' \wedge ((w \oplus A') \oplus w) = A' \wedge B'` and restores the ancilla.
-    '''
-    k = len(controls)
-    ancilla = free[0]
-    p = (k + 1) // 2
-    A, B = list(controls[:p]), list(controls[p:])
-    first = _mcx(A, ancilla, B + [target])
-    second = _mcx(B + [ancilla], target, A)
-    return first + second + first + second
-
-def _mcx(controls: Sequence[int], target: int, free: Sequence[int]) -> list[Gate]:
-    r'''Multi-controlled `X`; ``free`` lists qubits usable as dirty work space.'''
-    controls, free = list(controls), list(free)
-    k = len(controls)
-    if k == 0: return [x(target)]
-    if k == 1: return cx(controls[0], target)
-    if k == 2: return ccx(controls[0], controls[1], target)
-    if len(free) >= k - 2: return _mcx_vchain(controls, target, free[:k-2])
-    if len(free) >= 1: return _mcx_split(controls, target, free)
-    raise ValueError(f"C^{k}(X) needs at least one free qubit")
-
-def mcp(phi: float, qubits: Sequence[int]) -> list[Gate]:
-    r'''
-        Multi-controlled phase: `e^{i\phi}` on `\ket{1\ldots1}`, identity elsewhere. Diagonal, so
-        symmetric in ``qubits`` -- there is no distinguished target.
-
-        With `a = \text{AND}(qubits[:-2])` and `b, c` the last two qubits, the counting identity
-        `[b \wedge c] - [(b \oplus a) \wedge c] + [a \wedge c]` equals 2 exactly when
-        `a = b = c = 1` and 0 otherwise, which gives
-
-        .. MATH::
-
-            MCP(\phi) = CP(\phi/2)_{b,c};\ MCX_{a \to b};\ CP(-\phi/2)_{b,c};\ MCX_{a \to b};\
-                        MCP(\phi/2)_{a \cup \{c\}}
-
-        Each level drops one qubit and spends two `MCX` of `O(m)` Toffolis -- `c` is idle during
-        them, which is the borrowed work qubit -- so the whole thing is `\Theta(m^2)`.
-    '''
-    qubits = list(qubits)
-    if len(qubits) == 0: return []
-    if len(qubits) == 1: return [rz(phi, qubits[0])] # P(phi) up to a global phase
-    if len(qubits) == 2: return cp(phi, qubits[0], qubits[1])
-    *rest, b, c = qubits
-    flip = _mcx(rest, b, [c])
-    return cp(phi/2, b, c) + flip + cp(-phi/2, b, c) + flip + mcp(phi/2, rest + [c])
-
-def mcz(qubits: Sequence[int]) -> list[Gate]:
-    r'''Multi-controlled `Z`: a phase flip on `\ket{1\ldots1}`.'''
-    return mcp(pi, qubits)
+    transpiled = transpile(circuit, basis_gates=list(basis), optimization_level=0)
+    n = transpiled.num_qubits
+    gates = []
+    for instruction in transpiled.data:
+        name = instruction.operation.name
+        if name == "barrier":
+            continue
+        if name not in basis:
+            raise ValueError(f"Cannot convert '{name}': only unitary gates of {list(basis)} are supported")
+        qubits = [n-1-transpiled.find_bit(q).index for q in instruction.qubits]
+        params = [float(p) for p in instruction.operation.params]
+        gates.append(BASIS_GATES[name](*params, *qubits))
+    return gates
 
 ## --------------------------------------------------------------------------
 ## Gate-level depolarising noise
@@ -366,9 +293,11 @@ def zero_state(n: int) -> State:
     v[0] = 1
     return v
 
-def hadamard_layer(n: int) -> list[Gate]:
-    r'''`H^{\otimes n}`, as gates: the uniform-superposition preparation of Grover and QAOA.'''
-    return [gate for q in range(n) for gate in h(q)]
+def hadamard_layer(n: int) -> QuantumCircuit:
+    r'''`H^{\otimes n}`: the uniform-superposition preparation of Grover and QAOA.'''
+    circuit = QuantumCircuit(n)
+    circuit.h(range(n))
+    return circuit
 
 def prepare(gates: Sequence[Gate], n: int, epsilon: float, *, reference: float | None = None) -> DensityVector:
     r'''

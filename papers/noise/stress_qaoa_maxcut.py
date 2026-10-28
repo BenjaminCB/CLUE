@@ -20,7 +20,9 @@ from clue.linalg import SparseRowMatrix as Circuit, SparseVector as State, Numer
 from clue.numerical_domains import CC
 from clue.quantum_linalg import DensityOperator, DensityVector
 
-from circuits import Gate, kron_pow, H, hadamard_layer, noisy_circuit, prepare, rzz
+from qiskit import QuantumCircuit
+
+from circuits import kron_pow, H, from_qiskit, hadamard_layer, noisy_circuit, prepare
 from results import append_row
 
 CSV_HEADER = [
@@ -45,7 +47,7 @@ def cut_cost(state: int, edges: list[tuple[int,int]]) -> int:
     return sum(1 for (u,v) in edges if ((state >> u) & 1) != ((state >> v) & 1))
 
 def cut_matrix(n: int, edges: list[tuple[int,int]]) -> Circuit:
-    r'''The diagonal matrix of cut counts; the reference ``cost_gates`` is checked against.'''
+    r'''The diagonal matrix of cut counts; the reference ``cost_circuit`` is checked against.'''
     N = 2**n
     M = Circuit(N, CC)
     for state in range(N):
@@ -62,7 +64,7 @@ def cut_difference_count(n: int, edges: list[tuple[int,int]]) -> int:
     return len({a - b for a in values for b in values})
 
 def cost_unitary(n: int, edges: list[tuple[int,int]], gamma: float) -> Circuit:
-    r'''`exp(-i\gamma\,\text{cut})` as one collapsed matrix; the reference for ``cost_gates``.'''
+    r'''`exp(-i\gamma\,\text{cut})` as one collapsed matrix; the reference for ``cost_circuit``.'''
     N = 2**n
     U = Circuit(N, CC)
     for state in range(N):
@@ -79,16 +81,18 @@ def initial_state(n: int) -> State:
 ## --------------------------------------------------------------------------
 ## The circuit
 ## --------------------------------------------------------------------------
-## `cost_unitary` above is kept only so the gate decomposition below can be checked against it.
-def cost_gates(n: int, edges: list[tuple[int,int]], gamma: float) -> list[Gate]:
+## `cost_unitary` above is kept only so the circuit below can be checked against it.
+def cost_circuit(n: int, edges: list[tuple[int,int]], gamma: float) -> QuantumCircuit:
     r'''
-        `e^{-i\gamma\,\text{cut}(x)}` in the IBM basis: one `RZZ(-\gamma)` per edge, exactly, up to
-        a global phase. Qubit indices are flipped because `cut_cost` reads bit `u` of the state
-        index while the gate layer counts qubits from the most significant bit.
+        `e^{-i\gamma\,\text{cut}(x)}`: one `RZZ(-\gamma)` per edge, exactly, up to a global phase.
+        qiskit's qubit ``u`` is bit ``u`` of the state index, which is what `cut_cost` reads.
     '''
-    return [gate for (u,v) in edges for gate in rzz(-gamma, n-1-u, n-1-v)]
+    circuit = QuantumCircuit(n)
+    for (u,v) in edges:
+        circuit.rzz(-gamma, u, v)
+    return circuit
 
-def prep_gates(n: int) -> list[Gate]:
+def prep_circuit(n: int) -> QuantumCircuit:
     r'''State preparation, run **once**: the uniform superposition.'''
     return hadamard_layer(n)
 
@@ -99,8 +103,8 @@ def run_size(n: int, density: float, seed: int, gamma: float, epsilon: float, de
     N = 2**n
     edges = random_graph(n, density, seed)
 
-    preparation = prep_gates(n)
-    gates = cost_gates(n, edges, gamma)
+    preparation = from_qiskit(prep_circuit(n))
+    gates = from_qiskit(cost_circuit(n, edges, gamma))
     rho = prepare(preparation, n, epsilon) # noisy, once -- generally a mixed state
     C = noisy_circuit(gates, n, epsilon)   # the repeated operator: exp(-i gamma cut)
 

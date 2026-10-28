@@ -19,7 +19,26 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          python = pkgs.python3.withPackages (pythonPackages: [
+          # qiskit's setup.py monkey-patches setuptools-rust internals and hard-pins 1.12.0, while
+          # nixpkgs ships a newer one; build qiskit (only) against the version it expects.
+          python3 = pkgs.python3.override {
+            packageOverrides = self: super: {
+              qiskit = super.qiskit.overridePythonAttrs (old: {
+                build-system = [
+                  self.setuptools
+                  (super.setuptools-rust.overridePythonAttrs (_: rec {
+                    version = "1.12.0";
+                    src = pkgs.fetchPypi {
+                      pname = "setuptools_rust";
+                      inherit version;
+                      hash = "sha256-2UqT8Ml3UcFwFFZfB73DJL7kXTls0buoPY56+SuUXww=";
+                    };
+                  }))
+                ];
+              });
+            };
+          };
+          python = python3.withPackages (pythonPackages: [
             pythonPackages.beautifulsoup4
             # hypothesis drives the property-based tests in ./tests.
             pythonPackages.hypothesis
@@ -31,6 +50,8 @@
             pythonPackages.numpy
             pythonPackages.pyparsing
             pythonPackages.pytest
+            # qiskit builds and transpiles the circuits in papers/noise.
+            pythonPackages.qiskit
             pythonPackages.requests
             pythonPackages.scipy
             pythonPackages.sympy
