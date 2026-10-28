@@ -17,7 +17,7 @@ from pytest import approx, mark
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "papers", "noise"))
 
 from circuits import (  # noqa: E402
-    CX, DURATIONS, H, I, SX, X, Z, RZ, ccx, ccz, cp, cx, depolarizing_gate, embed1, embed2, embedN,
+    CX, CZ, DURATIONS, H, I, SX, X, Z, RZ, ccx, ccz, cp, cx, cz, depolarizing_gate, embed1, embed2, embedN,
     h, hadamard_layer, mcp, mcz, noisy_circuit, prepare, rx, rz, rzz, sx, x, zero_state,
     _mcx, _pauli_basis,
 )
@@ -86,6 +86,13 @@ class TestIBMBasis:
     def test_h_decomposition(self):
         assert_same_up_to_phase(unitary(h(0), 1), dense(H))
 
+    def test_cz_is_symmetric(self):
+        assert dense(embedN(CZ, (0, 1), 2)) == approx(dense(embedN(CZ, (1, 0), 2)))
+
+    @mark.parametrize("c, t, n", [(0, 1, 2), (1, 0, 2), (0, 2, 3), (2, 0, 3)])
+    def test_cx_decomposition(self, c, t, n):
+        assert_same_up_to_phase(unitary(cx(c, t), n), mcx_matrix([c], t, n))
+
     @mark.parametrize("theta", [0.0, 0.7, -1.3, np.pi])
     def test_rx_decomposition(self, theta):
         want = np.array([[np.cos(theta/2), -1j*np.sin(theta/2)], [-1j*np.sin(theta/2), np.cos(theta/2)]])
@@ -147,7 +154,7 @@ class TestBarencoMultiControlled:
         assert_same_up_to_phase(unitary(mcz(range(n)), n), want)
 
 class TestDepolarizingNoise:
-    @mark.parametrize("n, gate, lam", [(1, sx(0), 0.1), (2, cx(0, 1), 0.2), (3, x(2), 0.05), (3, cx(2, 0), 0.3)])
+    @mark.parametrize("n, gate, lam", [(1, sx(0), 0.1), (2, cz(0, 1), 0.2), (3, x(2), 0.05), (3, cz(2, 0), 0.3)])
     def test_matches_the_closed_form(self, n, gate, lam):
         r'''qiskit's convention: `(1-lam) U rho U^dag + lam tr(rho) I/2^k`, on the gate's own qubits.'''
         k = len(gate.qubits)

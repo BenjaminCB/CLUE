@@ -126,10 +126,13 @@ def embedN(gate: Circuit, qubits: Sequence[int], n: int) -> Circuit:
     return result
 
 ## --------------------------------------------------------------------------
-## The IBM basis {CX, RZ(theta), SX, X}
+## The IBM Heron basis {CZ, RZ(theta), SX, X}
 ## --------------------------------------------------------------------------
 Z = Circuit(2, CC)
 Z.increment(0,0,1); Z.increment(1,1,-1)
+
+CZ = Circuit(4, CC) # diag(1,1,1,-1), symmetric in its two qubits
+CZ.increment(0,0,1); CZ.increment(1,1,1); CZ.increment(2,2,1); CZ.increment(3,3,-1)
 
 SX = Circuit(2, CC) # sqrt(X) = (1/2)[[1+i, 1-i], [1-i, 1+i]]; SX*SX = X
 SX.increment(0,0,CC(complex( 0.5, 0.5))); SX.increment(0,1,CC(complex( 0.5,-0.5)))
@@ -145,7 +148,12 @@ def RZ(theta: float) -> Circuit:
 ## Device-typical gate durations, in nanoseconds. `rz` is exactly 0 because a virtual gate cannot
 ## fail; the others are the whole reason the 1-qubit/2-qubit noise ratio is a documented device
 ## parameter here rather than a second free knob.
-DURATIONS = {"rz": 0.0, "sx": 35.0, "x": 35.0, "cx": 400.0}
+##
+## Medians of `gate_length` over all qubits / couplings in the calibration snapshots shipped with
+## qiskit-ibm-runtime 0.51.0 (`fake_provider/backends/<name>/props_<name>.json`, 2025-02-26).
+DURATIONS = {"rz": 0.0, "sx": 24.0, "x": 24.0, "cz": 84.0} # ibm_fez (Heron r2)
+# DURATIONS = {"rz": 0.0, "sx": 32.0, "x": 32.0, "cz": 68.0} # ibm_torino (Heron r1)
+# DURATIONS = {"rz": 0.0, "sx": 36.0, "x": 36.0, "cz": 68.0} # ibm_marrakesh (Heron r2)
 
 class Gate(NamedTuple):
     r'''
@@ -166,7 +174,7 @@ class Gate(NamedTuple):
 def rz(theta: float, q: int) -> Gate: return Gate(RZ(theta), (q,), DURATIONS["rz"], "rz")
 def sx(q: int) -> Gate:               return Gate(SX, (q,), DURATIONS["sx"], "sx")
 def x(q: int) -> Gate:                return Gate(X, (q,), DURATIONS["x"], "x")
-def cx(c: int, t: int) -> Gate:       return Gate(CX, (c, t), DURATIONS["cx"], "cx")
+def cz(c: int, t: int) -> Gate:       return Gate(CZ, (c, t), DURATIONS["cz"], "cz")
 
 ## --------------------------------------------------------------------------
 ## Derived gates, as IBM-basis gate lists
@@ -175,13 +183,17 @@ def h(q: int) -> list[Gate]:
     r'''`H = e^{i\pi/4} RZ(\pi/2)\, SX\, RZ(\pi/2)`.'''
     return [rz(pi/2, q), sx(q), rz(pi/2, q)]
 
+def cx(c: int, t: int) -> list[Gate]:
+    r'''`CX = H_t\, CZ\, H_t`: conjugating by `H` on the target turns its `Z` into an `X`.'''
+    return h(t) + [cz(c, t)] + h(t)
+
 def rx(theta: float, q: int) -> list[Gate]:
     r'''`RX(\theta) = H\, RZ(\theta)\, H`, which collapses to the standard ZXZXZ form.'''
     return [rz(pi/2, q), sx(q), rz(theta + pi, q), sx(q), rz(pi/2, q)]
 
 def rzz(theta: float, c: int, t: int) -> list[Gate]:
     r'''`RZZ(\theta) = e^{-i\theta Z_c Z_t/2} = CX;\, RZ(\theta)_t;\, CX`.'''
-    return [cx(c, t), rz(theta, t), cx(c, t)]
+    return cx(c, t) + [rz(theta, t)] + cx(c, t)
 
 def cp(phi: float, p: int, q: int) -> list[Gate]:
     r'''
@@ -199,7 +211,7 @@ def ccz(a: int, b: int, c: int) -> list[Gate]:
 
         The control/target labels are immaterial -- the result is diagonal and symmetric.
     '''
-    return (cp(pi/2, b, c) + [cx(a, b)] + cp(-pi/2, b, c) + [cx(a, b)] + cp(pi/2, a, c))
+    return (cp(pi/2, b, c) + cx(a, b) + cp(-pi/2, b, c) + cx(a, b) + cp(pi/2, a, c))
 
 def ccx(a: int, b: int, c: int) -> list[Gate]:
     r'''Toffoli, as `H_c\, CCZ\, H_c`.'''
@@ -246,7 +258,7 @@ def _mcx(controls: Sequence[int], target: int, free: Sequence[int]) -> list[Gate
     controls, free = list(controls), list(free)
     k = len(controls)
     if k == 0: return [x(target)]
-    if k == 1: return [cx(controls[0], target)]
+    if k == 1: return cx(controls[0], target)
     if k == 2: return ccx(controls[0], controls[1], target)
     if len(free) >= k - 2: return _mcx_vchain(controls, target, free[:k-2])
     if len(free) >= 1: return _mcx_split(controls, target, free)
