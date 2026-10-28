@@ -2,7 +2,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from functools import lru_cache
 from itertools import combinations
-from math import sqrt, cos, sin
+from math import sqrt, cos, sin, nextafter
 from typing import NamedTuple
 from numpy import kron
 from qiskit import QuantumCircuit, transpile
@@ -157,6 +157,24 @@ ERROR_RATES = {"rz": 0.0, "sx": 1.552e-4, "x": 1.552e-4, "cz": 1.206e-3} # ibm_b
 def scaled_error_rates(epsilon: float) -> dict[str, float]:
     r'''The depolarising parameter each basis gate gets at stress level ``epsilon``.'''
     return {name: epsilon * rate for name, rate in ERROR_RATES.items()}
+
+def max_epsilon() -> float:
+    r'''The largest ``epsilon`` allowed: the noisiest gate (CZ) reaches depolarising parameter 1.'''
+    eps = 1 / max(ERROR_RATES.values())
+    while eps * max(ERROR_RATES.values()) > 1: # guard against rounding up past 1
+        eps = nextafter(eps, 0)
+    return eps
+
+def epsilon_grid(points: int, eps_min: float, eps_max: float | None = None) -> list[float]:
+    r'''
+        ``points`` values of ``epsilon`` spaced geometrically from ``eps_min`` to ``eps_max``
+        (default `max_epsilon`), plus the noise-free `0` and the unscaled device `1`, sorted.
+    '''
+    eps_max = max_epsilon() if eps_max is None else eps_max
+    ratio = (eps_max / eps_min) ** (1 / (points - 1)) if points > 1 else 1.0
+    grid = {eps_min * ratio**i for i in range(points)}
+    grid.discard(max(grid)); grid.add(eps_max) # the last power can round past eps_max
+    return sorted(grid | {0.0, 1.0})
 
 class Gate(NamedTuple):
     r'''

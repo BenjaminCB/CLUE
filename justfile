@@ -21,3 +21,13 @@ stress-grover *args:
 # script, e.g. `just stress-qaoa-maxcut --density 0.5 --epsilon 0`.
 stress-qaoa-maxcut *args:
     python -u papers/noise/stress_qaoa_maxcut.py {{ args }}
+
+# Sweep the error-rate scaling epsilon for noisy Grover at a fixed register size, writing
+# lumping factor against error rate to a CSV, e.g. `just sweep-grover --qubits 3 --points 25`.
+sweep-grover *args:
+    python -u papers/noise/sweep_grover.py {{ args }}
+
+# Sweep the error-rate scaling epsilon for the noisy MaxCut cost layer at a fixed graph size,
+# e.g. `just sweep-qaoa-maxcut --qubits 3 --points 25`.
+sweep-qaoa-maxcut *args:
+    python -u papers/noise/sweep_qaoa_maxcut.py {{ args }}
