@@ -36,12 +36,23 @@
                   }))
                 ];
               });
+              # nixpkgs' jupyterlab wrapper exports the literal string '$out/share/jupyter/lab' as
+              # JUPYTERLAB_DIR (unexpanded), so the lab assets are never found; point it at the store path.
+              jupyterlab = super.jupyterlab.overridePythonAttrs (old: {
+                makeWrapperArgs = [
+                  "--set"
+                  "JUPYTERLAB_DIR"
+                  "${placeholder "out"}/share/jupyter/lab"
+                ];
+              });
             };
           };
           python = python3.withPackages (pythonPackages: [
             pythonPackages.beautifulsoup4
             # hypothesis drives the property-based tests in ./tests.
             pythonPackages.hypothesis
+            # jupyterlab runs the notebooks, e.g. papers/noise/sweeps.ipynb for the sweep CSVs.
+            pythonPackages.jupyterlab
             pythonPackages.matplotlib
             # mypy lives in the same environment as the project's dependencies so
             # that it can resolve sympy/numpy instead of reporting import-not-found.
